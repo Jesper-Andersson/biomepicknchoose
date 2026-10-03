@@ -4,6 +4,9 @@ Turn individual overworld biomes on and off, from vanilla and other mods.
 
 Requires Minecraft 1.21.1 and NeoForge 21.1+.
 
+<img width="2258" height="1364" alt="image" src="https://github.com/user-attachments/assets/0438277e-343b-4aba-aabc-a9c3ae83c791" />
+
+
 ## Features
 
 - **Biome toggles.** Turn any overworld biome on or off, including biomes added by other mods. A disabled biome is replaced by the **nearest enabled biome by climate**, so terrain still blends naturally. Only the overworld is affected.
