@@ -1,0 +1,38 @@
+modLoader = "javafml"
+loaderVersion = "${loader_version_range}"
+license = "${mod_license}"
+
+[[mods]]
+modId = "${mod_id}"
+version = "${mod_version}"
+displayName = "${mod_name}"
+displayURL = "https://github.com/Jesper-Andersson"
+authors = "${mod_authors}"
+description = '''${mod_description}'''
+# Optional on both sides: players without the mod can join servers that have it, and vice versa
+displayTest = "IGNORE_ALL_VERSION"
+
+[[mixins]]
+config = "${mod_id}.mixins.json"
+
+[[dependencies."${mod_id}"]]
+modId = "neoforge"
+type = "required"
+versionRange = "${neo_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies."${mod_id}"]]
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraft_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+# Disabled biomes are also replaced in Lithostitched's biome injectors
+[[dependencies."${mod_id}"]]
+modId = "lithostitched"
+type = "optional"
+versionRange = "${lithostitched_version_range}"
+ordering = "NONE"
+side = "BOTH"
