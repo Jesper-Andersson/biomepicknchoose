@@ -134,6 +134,8 @@ public final class BiomePreviewCapture {
         if (server == null || minecraft.player == null) return Component.translatable("biomepicknchoose.command.preview.singleplayer_only");
         if (active != null) return Component.translatable("biomepicknchoose.command.preview.running");
 
+        // The first filter keeps only biomes with a key, so the later get() calls can't fail
+        //noinspection OptionalGetWithoutIsPresent
         List<Holder<Biome>> biomes = server.overworld().getChunkSource().getGenerator().getBiomeSource().possibleBiomes().stream()
                 .filter(biome -> biome.unwrapKey().isPresent())
                 .filter(biome -> namespace == null || biome.unwrapKey().get().location().getNamespace().equals(namespace))
@@ -289,7 +291,7 @@ public final class BiomePreviewCapture {
     private WaitStatus waitStatus() {
         var localPlayer = minecraft.player;
         if (minecraft.screen != null) return new WaitStatus(WaitKind.MENU, 0, 0);
-        if (localPlayer == null || minecraft.level.dimension() != Level.OVERWORLD
+        if (localPlayer == null || minecraft.level == null || minecraft.level.dimension() != Level.OVERWORLD
                 || localPlayer.distanceToSqr(spot.x(), spot.y(), spot.z()) > 4) {
             return new WaitStatus(WaitKind.TELEPORT, 0, 0);
         }
@@ -377,6 +379,8 @@ public final class BiomePreviewCapture {
         screen.resizeSubRectTo((w - cropW) / 2, (h - cropH) / 2, cropW, cropH, preview);
         screen.close();
         Path file = BiomePreviews.captureFile(id);
+        // The shared IO pool, which must not be closed
+        //noinspection resource
         Util.ioPool().execute(() -> {
             try {
                 Files.createDirectories(file.getParent());
@@ -450,6 +454,8 @@ public final class BiomePreviewCapture {
         ServerPlayer serverPlayer = server.getPlayerList().getPlayer(player);
         GameRules rules = overworld.getGameRules();
         ServerLevelData data = server.getWorldData().overworldData();
+        // The level is only read, it belongs to the server
+        //noinspection resource
         Saved state = new Saved(serverPlayer.level().dimension(), serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
                 serverPlayer.getYRot(), serverPlayer.getXRot(), serverPlayer.gameMode.getGameModeForPlayer(),
                 rules.getBoolean(GameRules.RULE_DAYLIGHT), rules.getBoolean(GameRules.RULE_WEATHER_CYCLE), overworld.getDayTime(),

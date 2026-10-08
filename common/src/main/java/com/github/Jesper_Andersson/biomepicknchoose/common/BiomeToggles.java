@@ -48,7 +48,8 @@ public final class BiomeToggles {
 
     private BiomeToggles() {}
 
-    public static void snapshot() {
+    // Synchronized, since version++ isn't atomic
+    public static synchronized void snapshot() {
         Set<ResourceKey<Biome>> keys = new HashSet<>();
         for (String id : BiomeConfig.disabledBiomes()) {
             ResourceLocation location = ResourceLocation.tryParse(id);

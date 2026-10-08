@@ -17,12 +17,12 @@ neoForge {
 }
 
 dependencies {
-    compileOnly group: 'org.spongepowered', name: 'mixin', version: '0.8.5'
+    compileOnly 'org.spongepowered:mixin:0.8.5'
     // For the mixin config plugin interface
-    compileOnly group: 'org.ow2.asm', name: 'asm-tree', version: '9.7.1'
+    compileOnly 'org.ow2.asm:asm-tree:9.7.1'
     // fabric and neoforge both bundle mixinextras, so it is safe to use it in common
-    compileOnly group: 'io.github.llamalad7', name: 'mixinextras-common', version: '0.4.1'
-    annotationProcessor group: 'io.github.llamalad7', name: 'mixinextras-common', version: '0.4.1'
+    compileOnly 'io.github.llamalad7:mixinextras-common:0.4.1'
+    annotationProcessor 'io.github.llamalad7:mixinextras-common:0.4.1'
 
     // Optional: the compat mixin wraps Lithostitched's biome injectors. Only applied when it is installed
     compileOnly "maven.modrinth:lithostitched:${lithostitched_version}-neoforge-${minecraft_version.substring(2)}"

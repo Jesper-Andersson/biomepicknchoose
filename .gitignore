@@ -13,6 +13,7 @@ out
 *.iml
 .idea/*
 !.idea/scopes
+!.idea/inspectionProfiles
 
 # gradle
 build
@@ -34,3 +35,5 @@ hs_err_pid*
 
 # vscode
 .vscode
+/.idea/inspectionProfiles/profiles_settings.xml
+/.idea/inspectionProfiles/Project_Default.xml

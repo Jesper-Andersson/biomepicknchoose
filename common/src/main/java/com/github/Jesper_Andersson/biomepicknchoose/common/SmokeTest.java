@@ -31,7 +31,7 @@ import java.util.function.BooleanSupplier;
  * when the {@value #PROPERTY} system property names the biome that the run's config disables. Once the server has
  * started, compares the biomes of the new world with what vanilla would place there. Then it turns that biome back
  * on and disables {@link #RELOAD_BIOME} in the config, runs {@code /reload}, and checks the same for that biome in
- * chunks generated after the reload. Finally it stops the server and exits with 0 if both passed and 1 otherwise.
+ * chunks generated after the reload. Finally, it stops the server and exits with 0 if both passed and 1 otherwise.
  */
 public final class SmokeTest {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -54,6 +54,8 @@ public final class SmokeTest {
     @Nullable
     private static BlockPos firstCenter;
     private static boolean reloading;
+    // The biome disabled at the start, set once the property was parsed
+    private static ResourceLocation firstBiome;
 
     private SmokeTest() {}
 
@@ -82,6 +84,7 @@ public final class SmokeTest {
             finish(server, false);
             return;
         }
+        firstBiome = id;
         if (!run(server, () -> check(server, id, null))) return;
 
         // Swap which biome is disabled, then apply it with /reload, see onReload
@@ -95,7 +98,7 @@ public final class SmokeTest {
     static void onReload(MinecraftServer server) {
         if (!enabled() || !reloading) return;
         reloading = false;
-        ResourceLocation first = ResourceLocation.tryParse(System.getProperty(PROPERTY));
+        ResourceLocation first = firstBiome;
         if (BiomeToggles.isDisabled(ResourceKey.create(Registries.BIOME, first))) {
             LOGGER.error("Smoke test FAILED: {} is still disabled after /reload", first);
             finish(server, false);

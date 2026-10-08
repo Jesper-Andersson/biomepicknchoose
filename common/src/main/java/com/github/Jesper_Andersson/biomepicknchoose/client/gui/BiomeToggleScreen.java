@@ -41,8 +41,8 @@ import java.util.TreeMap;
 import java.util.function.Consumer;
 
 /**
- * On/off toggles for every known overworld biome, one tab per mod. Saved to the config on Done: this game's own, or
- * the server's when an operator opened it with {@code /biomepicknchoose config}.
+ * On/off toggles for every known overworld biome, with one tab per mod. Done saves them to this game's config, or to
+ * the server's when an operator opened the screen with {@code /biomepicknchoose config}.
  */
 public final class BiomeToggleScreen extends Screen {
     private static final int FOOTER_HEIGHT = 56;
@@ -167,8 +167,8 @@ public final class BiomeToggleScreen extends Screen {
         cancelButton.setPosition(width / 2 + 55, height - 28);
     }
 
-    // Vanilla gives every tab the same width within 400 pixels, which cuts long mod names off early. Instead each tab
-    // fits its title, and when they don't all fit the widest ones shrink to the same width, the rest keeping theirs
+    // Vanilla gives every tab the same width within 400 pixels, which cuts long mod names off early. Instead, each tab
+    // fits its title. When they don't all fit, the widest ones shrink to the same width and the rest keep theirs
     private void arrangeTabs() {
         List<TabButton> buttons = tabNavigationBar.children().stream()
                 .filter(TabButton.class::isInstance).map(TabButton.class::cast).toList();

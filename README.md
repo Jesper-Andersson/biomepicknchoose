@@ -60,11 +60,11 @@ Configs from older versions (`biomepicknchoose-common.toml` on NeoForge, `biomep
 
 Other files under `config/`:
 
-| Path | Contents |
-| --- | --- |
+| Path                                 | Contents                                                                                |
+|--------------------------------------|-----------------------------------------------------------------------------------------|
 | `biomepicknchoose-known-biomes.json` | Cache of every overworld biome seen, so the menu can list modded biomes outside a world |
-| `biomepicknchoose/presets/` | Saved presets (JSON) |
-| `biomepicknchoose/biome_previews/` | Captured preview pictures |
+| `biomepicknchoose/presets/`          | Saved presets (JSON)                                                                    |
+| `biomepicknchoose/biome_previews/`   | Captured preview pictures                                                               |
 
 ## For mod developers
 

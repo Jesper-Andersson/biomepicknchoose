@@ -11,7 +11,6 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.InterModComms;
-import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.InterModProcessEvent;
 import net.neoforged.neoforge.common.NeoForge;
@@ -32,7 +31,7 @@ import java.util.Set;
 public class BiomePickNChoose {
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    public BiomePickNChoose(IEventBus modEventBus, ModContainer modContainer) {
+    public BiomePickNChoose(IEventBus modEventBus) {
         BiomeConfig.init();
         modEventBus.addListener(BiomePickNChoose::onInterModProcess);
         modEventBus.addListener(BiomePickNChoose::registerPayloads);

@@ -23,16 +23,17 @@ import java.util.stream.Stream;
 
 /**
  * Finds the overworld biomes of installed mods from their data files, so the menu can list them before any world was
- * loaded. A biome counts when a mod defines it and it is either in an overworld biome tag (and no Nether or End tag),
- * which is how TerraBlender based mods like Biomes O' Plenty mark theirs, or listed in a replaced overworld
- * dimension or biome parameter list, which is how datapack style mods like Terralith add theirs. Loading a world is
- * still the complete list, since a mod can also place biomes from code.
+ * loaded. A biome counts when a mod defines it, and it is either in an overworld biome tag but no Nether or End tag,
+ * or listed in a replaced overworld dimension or biome parameter list. TerraBlender based mods like Biomes O' Plenty
+ * tag their biomes, and datapack style mods like Terralith replace the overworld. Loading a world is still the
+ * complete list, since a mod can also place biomes from code.
  */
 public final class ModBiomeScan {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final List<String> TAG_NAMESPACES = List.of("minecraft", "c", "forge", "neoforge");
     private static final String OVERWORLD_TAG = "is_overworld";
     private static final List<String> OTHER_TAGS = List.of("is_nether", "is_end", "is_the_end");
+    private static final List<String> ALL_TAGS = Stream.concat(Stream.of(OVERWORLD_TAG), OTHER_TAGS.stream()).toList();
     private static final List<String> OVERWORLD_FILES = List.of(
             "data/minecraft/dimension/overworld.json",
             "data/minecraft/worldgen/multi_noise_biome_source_parameter_list/overworld.json");
@@ -104,7 +105,7 @@ public final class ModBiomeScan {
             }
         }
         for (String namespace : TAG_NAMESPACES) {
-            for (String tag : concat(OVERWORLD_TAG, OTHER_TAGS)) {
+            for (String tag : ALL_TAGS) {
                 Path file = data.resolve(namespace).resolve("tags/worldgen/biome").resolve(tag + ".json");
                 if (!Files.isRegularFile(file)) continue;
                 JsonArray values = read(file).getAsJsonArray("values");
@@ -159,12 +160,5 @@ public final class ModBiomeScan {
         String name = path.getFileName().toString();
         // Folders inside jars can end with a slash
         return name.endsWith("/") ? name.substring(0, name.length() - 1) : name;
-    }
-
-    private static List<String> concat(String first, List<String> rest) {
-        List<String> all = new ArrayList<>(rest.size() + 1);
-        all.add(first);
-        all.addAll(rest);
-        return all;
     }
 }
