@@ -1,6 +1,6 @@
 # Biome Pick'n'Choose
 
-Available on [Modrinth](https://modrinth.com/mod/<slug>) and [CurseForge](https://www.curseforge.com/minecraft/mc-mods/<slug>).
+Available on [Modrinth](https://modrinth.com/mod/biome-picknchoose) and [CurseForge](https://www.curseforge.com/minecraft/mc-mods/biome-picknchoose).
 Turn individual overworld biomes on and off, from vanilla and other mods.
 
 Requires Minecraft 1.21.1 and NeoForge 21.1+.
