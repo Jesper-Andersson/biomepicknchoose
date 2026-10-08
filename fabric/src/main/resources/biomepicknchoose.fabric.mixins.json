@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.github.Jesper_Andersson.biomepicknchoose.mixin",
+  "plugin": "com.github.Jesper_Andersson.biomepicknchoose.FabricMixinPlugin",
+  "refmap": "${mod_id}.refmap.json",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "compat.InjectorBiomeSourceMixin"
+  ],
+  "client": [
+    "MinecraftMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

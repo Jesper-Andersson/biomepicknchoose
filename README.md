@@ -3,7 +3,7 @@
 Available on [Modrinth](https://modrinth.com/mod/biome-picknchoose) and [CurseForge](https://www.curseforge.com/minecraft/mc-mods/biome-picknchoose).
 Turn individual overworld biomes on and off, from vanilla and other mods.
 
-Requires Minecraft 1.21.1 and NeoForge 21.1+.
+Requires Minecraft 1.21.1 and either NeoForge 21.1+ or Fabric with Fabric API.
 
 <img width="2258" height="1364" alt="image" src="https://github.com/user-attachments/assets/0438277e-343b-4aba-aabc-a9c3ae83c791" />
 
@@ -12,7 +12,7 @@ Requires Minecraft 1.21.1 and NeoForge 21.1+.
 
 - **Biome toggles.** Turn any overworld biome on or off, including biomes added by other mods. A disabled biome is replaced by the **nearest enabled biome by climate**, so terrain still blends naturally. Only the overworld is affected.
 - **Applies to new chunks.** Changes take effect on the next world load and only affect chunks generated after that. Chunks that already exist are not changed.
-- **In-game config menu.** Open it from Mods → Biome Pick'n'Choose → Config.
+- **In-game config menu.** Open it from Mods → Biome Pick'n'Choose → Config. On Fabric, this needs [Mod Menu](https://modrinth.com/mod/modmenu).
   - One tab per mod, with Minecraft first.
   - A green On / red Off toggle per biome. Hovering a toggle shows the biome id.
   - Enable all / Disable all buttons for each tab.
@@ -30,7 +30,7 @@ Requires Minecraft 1.21.1 and NeoForge 21.1+.
   - `/biomepick_preview capture_missing [namespace]` only captures biomes that don't have a picture yet.
   - `/biomepick_preview cancel` stops a capture.
   - Pictures are saved to `config/biomepicknchoose/biome_previews/<namespace>/<biome>.png`. Each one can be removed from the menu ("Remove picture").
-- **Server-side.** It works on dedicated servers, and players don't need the mod to join. Biome choice happens during server worldgen. Set biomes via `config/biomepicknchoose-common.toml`.
+- **Server-side.** It works on dedicated servers, and players don't need the mod to join. Biome choice happens during server worldgen. Set biomes via the config file (see [Configuration](#configuration)).
 - **Mod compatibility.**
   - TerraBlender regions: replacement wraps the whole biome lookup.
   - Lithostitched biome injectors: a compat mixin is applied only when Lithostitched is installed.
@@ -39,10 +39,18 @@ Requires Minecraft 1.21.1 and NeoForge 21.1+.
 
 ## Configuration
 
-Disabled biomes are stored in `config/biomepicknchoose-common.toml`:
+Disabled biomes are stored in `config/biomepicknchoose-common.toml` on NeoForge:
 
 ```toml
 disabledBiomes = ["minecraft:plains", "minecraft:dark_forest"]
+```
+
+and in `config/biomepicknchoose-common.json` on Fabric:
+
+```json
+{
+  "disabledBiomes": ["minecraft:plains", "minecraft:dark_forest"]
+}
 ```
 
 Each listed biome is replaced by the nearest enabled biome by climate. The list applies to newly generated chunks on the next world load.
@@ -57,7 +65,7 @@ Other files under `config/`:
 
 ## For mod developers
 
-To list your biomes in the menu before any world has been loaded, send an IMC message to `biomepicknchoose` with method `register_biomes` during `InterModEnqueueEvent`. The payload is a `Collection` of `ResourceLocation`, `ResourceKey`, or id `String`:
+On NeoForge, to list your biomes in the menu before any world has been loaded, send an IMC message to `biomepicknchoose` with method `register_biomes` during `InterModEnqueueEvent`. The payload is a `Collection` of `ResourceLocation`, `ResourceKey`, or id `String`:
 
 ```java
 @SubscribeEvent
@@ -79,7 +87,7 @@ To check whether a biome is disabled, use the stable API in `BiomeToggles`:
 ./gradlew build
 ```
 
-The jar is written to `build/libs/`.
+The project follows the [MultiLoader Template](https://github.com/jaredlll08/MultiLoader-Template): shared code is in `common/`, and loader specific code in `neoforge/` and `fabric/`. The jars are written to `neoforge/build/libs/` and `fabric/build/libs/`.
 
 ## License
 
