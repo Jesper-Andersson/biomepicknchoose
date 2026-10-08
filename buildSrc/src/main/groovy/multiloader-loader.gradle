@@ -42,3 +42,26 @@ tasks.named('sourcesJar', Jar) {
     dependsOn(configurations.commonResources)
     from(configurations.commonResources)
 }
+
+// Smoke test: a headless dedicated server makes a new world with one biome disabled in the mod config, and SmokeTest
+// checks that it doesn't generate. Run with ./gradlew smokeTest. Each loader adds the runSmokeTest run in
+// runs/smoketest, and writes its own config file after this task wipes the folder
+ext.smokeTestBiome = 'minecraft:plains'
+ext.smokeTestDir = file('runs/smoketest')
+
+tasks.register('prepareSmokeTest') {
+    group = 'verification'
+    description = 'Wipes the smoke test server folder, so the run makes a new world'
+    doLast {
+        delete(smokeTestDir)
+        file("$smokeTestDir/config").mkdirs()
+        file("$smokeTestDir/eula.txt").text = 'eula=true\n'
+        file("$smokeTestDir/server.properties").text = [
+                'level-seed=12345',
+                'online-mode=false',
+                'server-port=25599',
+                'view-distance=2',
+                'simulation-distance=2',
+        ].join('\n') + '\n'
+    }
+}

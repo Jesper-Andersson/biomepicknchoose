@@ -1,6 +1,7 @@
 package com.github.Jesper_Andersson.biomepicknchoose;
 
 import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeToggles;
+import com.github.Jesper_Andersson.biomepicknchoose.common.SmokeTest;
 import com.mojang.logging.LogUtils;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
@@ -13,6 +14,7 @@ import net.neoforged.fml.event.lifecycle.InterModProcessEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.server.ServerAboutToStartEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import org.slf4j.Logger;
 
 import java.util.Collection;
@@ -28,6 +30,7 @@ public class BiomePickNChoose {
         modEventBus.addListener(BiomePickNChoose::onInterModProcess);
         NeoForge.EVENT_BUS.addListener((ServerAboutToStartEvent event) -> BiomeToggles.onServerAboutToStart());
         NeoForge.EVENT_BUS.addListener((ServerStartedEvent event) -> BiomeToggles.onServerStarted(event.getServer()));
+        NeoForge.EVENT_BUS.addListener((ServerStoppedEvent event) -> SmokeTest.onServerStopped());
     }
 
     private static void onInterModProcess(InterModProcessEvent event) {

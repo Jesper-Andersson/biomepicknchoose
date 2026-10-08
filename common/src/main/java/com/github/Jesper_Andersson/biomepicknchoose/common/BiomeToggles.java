@@ -131,5 +131,6 @@ public final class BiomeToggles {
         } catch (IOException e) {
             LOGGER.warn("Couldn't write {}", file, e);
         }
+        SmokeTest.onServerStarted(server);
     }
 }

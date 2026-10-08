@@ -27,11 +27,25 @@ neoForge {
             server()
             programArgument '--nogui'
         }
+        smokeTest {
+            server()
+            programArgument '--nogui'
+            gameDirectory = project.file('runs/smoketest')
+            systemProperty('biomepicknchoose.smoketest', smokeTestBiome)
+            disableIdeRun()
+            taskBefore(tasks.named('prepareSmokeTest'))
+        }
     }
     mods {
         "${mod_id}" {
             sourceSet sourceSets.main
         }
+    }
+}
+
+prepareSmokeTest {
+    doLast {
+        file("$smokeTestDir/config/${mod_id}-common.toml").text = """disabledBiomes = ["${smokeTestBiome}"]\n"""
     }
 }
 

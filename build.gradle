@@ -4,3 +4,13 @@ plugins {
     // see https://projects.neoforged.net/neoforged/moddevgradle for new versions
     id 'net.neoforged.moddev' version '2.0.147' apply false
 }
+
+// Runs the smoke test on both loaders, see prepareSmokeTest in multiloader-loader.gradle
+tasks.register('smokeTest') {
+    group = 'verification'
+    description = 'Makes a new world on each loader with a biome disabled and checks it does not generate'
+    dependsOn(':fabric:runSmokeTest', ':neoforge:runSmokeTest')
+}
+gradle.projectsEvaluated {
+    project(':neoforge').tasks.named('runSmokeTest') { mustRunAfter(':fabric:runSmokeTest') }
+}
