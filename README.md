@@ -82,4 +82,4 @@ The jar is written to `build/libs/`.
 
 ## License
 
-All Rights Reserved.
+CC0 1.0 Universal
