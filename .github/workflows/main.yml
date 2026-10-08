@@ -1,0 +1,3 @@
+- name: mc-publish
+
+  uses: Kira-NT/mc-publish@v3.3.1
