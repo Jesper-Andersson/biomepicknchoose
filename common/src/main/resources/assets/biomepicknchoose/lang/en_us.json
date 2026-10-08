@@ -7,8 +7,8 @@
   "biomepicknchoose.configuration.sort.alphabetical": "A-Z",
   "biomepicknchoose.configuration.sort.enabled_first": "On first",
   "biomepicknchoose.configuration.sort.disabled_first": "Off first",
-  "biomepicknchoose.configuration.hint.apply": "Changes apply to newly generated chunks on the next world load.",
-  "biomepicknchoose.configuration.hint.load_world": "Load a world once to list biomes from other mods.",
+  "biomepicknchoose.configuration.hint.apply": "Changes apply to newly generated chunks after /reload or on the next world load.",
+  "biomepicknchoose.configuration.hint.load_world": "Biomes from other mods are read from their files. Load a world once to make sure the list is complete.",
   "biomepicknchoose.configuration.preview.none": "No preview. Run /biomepick_preview capture in a world.",
   "biomepicknchoose.configuration.preview.remove": "Remove picture",
   "biomepicknchoose.configuration.preview.remove.confirm": "Remove the captured picture of %s?",
@@ -45,5 +45,9 @@
   "biomepicknchoose.command.preview.not_running": "No biome preview capture is running.",
   "biomepicknchoose.command.preview.none": "No overworld biomes to capture.",
   "biomepicknchoose.command.preview.none_missing": "Every biome already has a preview.",
-  "biomepicknchoose.command.preview.cancelled": "Biome preview capture cancelled."
+  "biomepicknchoose.command.preview.cancelled": "Biome preview capture cancelled.",
+  "biomepicknchoose.configuration.title.server": "Biome Pick'n'Choose: Server Config",
+  "biomepicknchoose.configuration.hint.apply.server": "Done saves the server's config. Run /reload to apply it to newly generated chunks.",
+  "biomepicknchoose.server_config.no_mod": "Install Biome Pick'n'Choose on your client to edit the server's biomes",
+  "biomepicknchoose.server_config.saved": "Saved the server's biome config. Run /reload to apply it to newly generated chunks"
 }

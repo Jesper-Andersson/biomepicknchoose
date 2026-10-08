@@ -44,8 +44,8 @@ tasks.named('sourcesJar', Jar) {
 }
 
 // Smoke test: a headless dedicated server makes a new world with one biome disabled in the mod config, and SmokeTest
-// checks that it doesn't generate. Run with ./gradlew smokeTest. Each loader adds the runSmokeTest run in
-// runs/smoketest, and writes its own config file after this task wipes the folder
+// checks that it doesn't generate, then that /reload applies a changed config. Run with ./gradlew smokeTest. Each
+// loader adds the runSmokeTest run in runs/smoketest
 ext.smokeTestBiome = 'minecraft:plains'
 ext.smokeTestDir = file('runs/smoketest')
 
@@ -56,6 +56,7 @@ tasks.register('prepareSmokeTest') {
         delete(smokeTestDir)
         file("$smokeTestDir/config").mkdirs()
         file("$smokeTestDir/eula.txt").text = 'eula=true\n'
+        file("$smokeTestDir/config/${mod_id}.json").text = """{ "biomes": { "${smokeTestBiome}": false } }\n"""
         file("$smokeTestDir/server.properties").text = [
                 'level-seed=12345',
                 'online-mode=false',
@@ -63,5 +64,17 @@ tasks.register('prepareSmokeTest') {
                 'view-distance=2',
                 'simulation-distance=2',
         ].join('\n') + '\n'
+    }
+}
+
+// The game exits with 0 when it fails before SmokeTest runs, for example when a mod fails to load, so the result
+// comes from the file SmokeTest writes instead
+tasks.matching { it.name == 'runSmokeTest' }.configureEach {
+    def result = file("$smokeTestDir/smoketest-result.txt")
+    doFirst { delete(result) }
+    doLast {
+        if (!result.isFile() || result.text.trim() != 'PASSED') {
+            throw new GradleException("Smoke test didn't pass, see the log above")
+        }
     }
 }

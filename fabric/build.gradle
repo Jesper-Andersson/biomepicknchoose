@@ -67,12 +67,6 @@ loom {
     }
 }
 
-prepareSmokeTest {
-    doLast {
-        file("$smokeTestDir/config/${mod_id}-common.json").text = """{ "disabledBiomes": ["${smokeTestBiome}"] }\n"""
-    }
-}
-
 tasks.named('runSmokeTest') {
     dependsOn('prepareSmokeTest')
 }

@@ -3,9 +3,11 @@ package com.github.Jesper_Andersson.biomepicknchoose.client.preview;
 import com.github.Jesper_Andersson.biomepicknchoose.Constants;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.logging.LogUtils;
+import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.packs.resources.Resource;
 import com.github.Jesper_Andersson.biomepicknchoose.platform.Services;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -16,9 +18,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Biome preview pictures for the biome menu: shipped with the mod first, then captured by the player with
@@ -28,6 +33,13 @@ public final class BiomePreviews {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Map<ResourceLocation, Optional<Preview>> CACHE = new HashMap<>();
     private static final List<ResourceLocation> DYNAMIC = new ArrayList<>();
+    // Small copies for the rows of the biome list, decoded off the render thread. Empty when there is no picture
+    public static final int THUMBNAIL_WIDTH = 128;
+    public static final int THUMBNAIL_HEIGHT = 72;
+    private static final Map<ResourceLocation, Optional<ResourceLocation>> THUMBNAILS = new HashMap<>();
+    private static final Set<ResourceLocation> LOADING = new HashSet<>();
+    // Bumped by release, so thumbnails still loading from before are dropped
+    private static int generation;
 
     /** A loaded picture; captured is true when it was read from a {@code /biomepick_preview capture} file. */
     private record Preview(ResourceLocation texture, boolean captured) {}
@@ -48,6 +60,36 @@ public final class BiomePreviews {
         return CACHE.computeIfAbsent(biome, BiomePreviews::load).map(Preview::texture).orElse(null);
     }
 
+    /**
+     * The thumbnail for the biome list, or null while it is loading or if there is no picture. Starts loading it on
+     * the first call.
+     */
+    @Nullable
+    public static ResourceLocation thumbnailFor(ResourceLocation biome) {
+        Optional<ResourceLocation> thumbnail = THUMBNAILS.get(biome);
+        if (thumbnail != null) return thumbnail.orElse(null);
+        if (LOADING.add(biome)) {
+            Minecraft minecraft = Minecraft.getInstance();
+            int started = generation;
+            CompletableFuture.supplyAsync(() -> readThumbnail(biome), Util.backgroundExecutor()).thenAcceptAsync(image -> {
+                if (started != generation) {
+                    if (image != null) image.close();
+                    return;
+                }
+                LOADING.remove(biome);
+                if (image == null) {
+                    THUMBNAILS.put(biome, Optional.empty());
+                    return;
+                }
+                ResourceLocation location = thumbnailLocation(biome);
+                minecraft.getTextureManager().register(location, new DynamicTexture(image));
+                DYNAMIC.add(location);
+                THUMBNAILS.put(biome, Optional.of(location));
+            }, minecraft);
+        }
+        return null;
+    }
+
     /** Whether the picture shown for this biome comes from a captured file, so removing it would change anything. */
     public static boolean isCaptured(ResourceLocation biome) {
         return CACHE.computeIfAbsent(biome, BiomePreviews::load).map(Preview::captured).orElse(false);
@@ -63,7 +105,13 @@ public final class BiomePreviews {
     public static void delete(ResourceLocation biome) {
         ResourceLocation location = dynamicLocation(biome);
         if (DYNAMIC.remove(location)) Minecraft.getInstance().getTextureManager().release(location);
+        ResourceLocation thumbnail = thumbnailLocation(biome);
+        if (DYNAMIC.remove(thumbnail)) Minecraft.getInstance().getTextureManager().release(thumbnail);
         CACHE.remove(biome);
+        THUMBNAILS.remove(biome);
+        // Drop thumbnails still loading, in case this one was, so they are loaded again
+        LOADING.clear();
+        generation++;
         Path file = captureFile(biome);
         try {
             Files.deleteIfExists(file);
@@ -78,6 +126,9 @@ public final class BiomePreviews {
         DYNAMIC.forEach(minecraft.getTextureManager()::release);
         DYNAMIC.clear();
         CACHE.clear();
+        THUMBNAILS.clear();
+        LOADING.clear();
+        generation++;
     }
 
     private static ResourceLocation shippedLocation(ResourceLocation biome) {
@@ -88,6 +139,29 @@ public final class BiomePreviews {
     private static ResourceLocation dynamicLocation(ResourceLocation biome) {
         return ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID,
                 "dynamic/biome_preview/" + biome.getNamespace() + "/" + biome.getPath());
+    }
+
+    private static ResourceLocation thumbnailLocation(ResourceLocation biome) {
+        return ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID,
+                "dynamic/biome_thumbnail/" + biome.getNamespace() + "/" + biome.getPath());
+    }
+
+    // Runs on a background thread. The shipped picture first, like load
+    @Nullable
+    private static NativeImage readThumbnail(ResourceLocation biome) {
+        Optional<Resource> shipped = Minecraft.getInstance().getResourceManager().getResource(shippedLocation(biome));
+        Path file = captureFile(biome);
+        if (shipped.isEmpty() && !Files.isRegularFile(file)) return null;
+        try (InputStream in = shipped.isPresent() ? shipped.get().open() : Files.newInputStream(file);
+             // RGBA like the thumbnail, since resizeSubRectTo needs both in the same format and pictures can be RGB
+             NativeImage image = NativeImage.read(NativeImage.Format.RGBA, in)) {
+            NativeImage thumbnail = new NativeImage(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, false);
+            image.resizeSubRectTo(0, 0, image.getWidth(), image.getHeight(), thumbnail);
+            return thumbnail;
+        } catch (IOException | RuntimeException e) {
+            LOGGER.warn("Couldn't read biome preview for {}", biome, e);
+            return null;
+        }
     }
 
     private static Optional<Preview> load(ResourceLocation biome) {

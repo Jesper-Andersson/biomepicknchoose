@@ -27,8 +27,8 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * Which overworld biomes are turned off. The config is read once when a world starts, so it stays fixed while the
- * world runs, and the menu changes only apply on the next world load.
+ * Which overworld biomes are turned off. The config is read when a world starts and again on {@code /reload}, so
+ * changes apply to chunks generated after that. Chunks that already exist keep their biomes.
  * <p>
  * On NeoForge, other mods can list their overworld biomes in the menu before any world was loaded by sending an IMC
  * message to {@value Constants#MOD_ID} with method {@value #REGISTER_BIOMES} and a {@code Collection} of biome
@@ -50,13 +50,13 @@ public final class BiomeToggles {
 
     public static void snapshot() {
         Set<ResourceKey<Biome>> keys = new HashSet<>();
-        for (String id : Services.PLATFORM.getDisabledBiomes()) {
+        for (String id : BiomeConfig.disabledBiomes()) {
             ResourceLocation location = ResourceLocation.tryParse(id);
             if (location != null) keys.add(ResourceKey.create(Registries.BIOME, location));
         }
         disabled = Set.copyOf(keys);
         version++;
-        if (!keys.isEmpty()) LOGGER.info("Disabled overworld biomes: {}", keys.stream().map(ResourceKey::location).toList());
+        LOGGER.info("Disabled overworld biomes: {}", keys.stream().map(ResourceKey::location).sorted().toList());
     }
 
     public static int version() {
@@ -83,11 +83,15 @@ public final class BiomeToggles {
         return Services.PLATFORM.getConfigDir().resolve("biomepicknchoose-known-biomes.json");
     }
 
-    /** Vanilla, IMC-registered, cached and currently disabled biome ids, so a disabled biome can always be turned back on. */
+    /**
+     * Vanilla, IMC-registered, found in mod files, cached and currently disabled biome ids, so a disabled biome can
+     * always be turned back on.
+     */
     public static Set<ResourceLocation> knownBiomes() {
         Set<ResourceLocation> ids = new TreeSet<>();
         MultiNoiseBiomeSourceParameterList.Preset.OVERWORLD.usedBiomes().forEach(key -> ids.add(key.location()));
         ids.addAll(registered);
+        ids.addAll(ModBiomeScan.overworldBiomes());
         Path file = knownBiomesFile();
         if (Files.isRegularFile(file)) {
             try (Reader reader = Files.newBufferedReader(file)) {
@@ -99,7 +103,25 @@ public final class BiomeToggles {
                 LOGGER.warn("Couldn't read {}", file, e);
             }
         }
-        for (String id : Services.PLATFORM.getDisabledBiomes()) {
+        for (String id : BiomeConfig.disabledBiomes()) {
+            ResourceLocation location = ResourceLocation.tryParse(id);
+            if (location != null) ids.add(location);
+        }
+        return ids;
+    }
+
+    /**
+     * Biomes the server's overworld can place, with vanilla, IMC-registered and currently disabled biomes. Used instead
+     * of {@link #knownBiomes()} when an operator edits the server's config from a client.
+     */
+    public static Set<ResourceLocation> serverKnownBiomes(MinecraftServer server) {
+        Set<ResourceLocation> ids = new TreeSet<>();
+        MultiNoiseBiomeSourceParameterList.Preset.OVERWORLD.usedBiomes().forEach(key -> ids.add(key.location()));
+        ids.addAll(registered);
+        server.overworld().getChunkSource().getGenerator().getBiomeSource().possibleBiomes().stream()
+                .flatMap(biome -> biome.unwrapKey().stream())
+                .forEach(key -> ids.add(key.location()));
+        for (String id : BiomeConfig.disabledBiomes()) {
             ResourceLocation location = ResourceLocation.tryParse(id);
             if (location != null) ids.add(location);
         }
@@ -114,6 +136,12 @@ public final class BiomeToggles {
     /** Called by each loader when a server is about to load its worlds. */
     public static void onServerAboutToStart() {
         snapshot();
+    }
+
+    /** Called by each loader after {@code /reload}, so config changes apply without restarting. */
+    public static void onReload(MinecraftServer server) {
+        snapshot();
+        SmokeTest.onReload(server);
     }
 
     /** Called by each loader once a server has loaded its worlds. */

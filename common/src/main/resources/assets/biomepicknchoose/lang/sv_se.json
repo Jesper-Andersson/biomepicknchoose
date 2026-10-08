@@ -7,8 +7,8 @@
   "biomepicknchoose.configuration.sort.alphabetical": "A-Ö",
   "biomepicknchoose.configuration.sort.enabled_first": "På först",
   "biomepicknchoose.configuration.sort.disabled_first": "Av först",
-  "biomepicknchoose.configuration.hint.apply": "Ändringar gäller nygenererade chunkar nästa gång en värld laddas.",
-  "biomepicknchoose.configuration.hint.load_world": "Ladda en värld en gång för att visa biomer från andra moddar.",
+  "biomepicknchoose.configuration.hint.apply": "Ändringar gäller nygenererade chunkar efter /reload eller nästa gång en värld laddas.",
+  "biomepicknchoose.configuration.hint.load_world": "Biomer från andra moddar läses från deras filer. Ladda en värld en gång för att se till att listan är komplett.",
   "biomepicknchoose.configuration.preview.none": "Ingen förhandsvisning. Kör /biomepick_preview capture i en värld.",
   "biomepicknchoose.configuration.preview.remove": "Ta bort bild",
   "biomepicknchoose.configuration.preview.remove.confirm": "Ta bort den fotograferade bilden av %s?",
@@ -45,5 +45,9 @@
   "biomepicknchoose.command.preview.not_running": "Ingen fotografering av biomer pågår.",
   "biomepicknchoose.command.preview.none": "Inga biomer i övre världen att fotografera.",
   "biomepicknchoose.command.preview.none_missing": "Alla biomer har redan en förhandsvisning.",
-  "biomepicknchoose.command.preview.cancelled": "Fotograferingen av biomer avbröts."
+  "biomepicknchoose.command.preview.cancelled": "Fotograferingen av biomer avbröts.",
+  "biomepicknchoose.configuration.title.server": "Biome Pick'n'Choose: Serverinställningar",
+  "biomepicknchoose.configuration.hint.apply.server": "Klar sparar serverns inställningar. Kör /reload för att tillämpa dem på nygenererade chunkar.",
+  "biomepicknchoose.server_config.no_mod": "Installera Biome Pick'n'Choose på din klient för att ändra serverns biomer",
+  "biomepicknchoose.server_config.saved": "Sparade serverns biominställningar. Kör /reload för att tillämpa dem på nygenererade chunkar"
 }

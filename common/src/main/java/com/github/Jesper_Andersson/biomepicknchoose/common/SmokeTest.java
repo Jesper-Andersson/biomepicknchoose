@@ -16,17 +16,29 @@ import net.minecraft.world.level.biome.MultiNoiseBiomeSourceParameterLists;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import org.apache.logging.log4j.LogManager;
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Set;
+import java.util.function.BooleanSupplier;
 
 /**
  * Headless check that a disabled biome doesn't generate, run by the {@code runSmokeTest} Gradle tasks. Only active
  * when the {@value #PROPERTY} system property names the biome that the run's config disables. Once the server has
- * started, compares the biomes of the new world with what vanilla would place there, then stops the server and exits
- * with 0 if the biome never appeared and 1 otherwise.
+ * started, compares the biomes of the new world with what vanilla would place there. Then it turns that biome back
+ * on and disables {@link #RELOAD_BIOME} in the config, runs {@code /reload}, and checks the same for that biome in
+ * chunks generated after the reload. Finally it stops the server and exits with 0 if both passed and 1 otherwise.
  */
 public final class SmokeTest {
     private static final Logger LOGGER = LogUtils.getLogger();
     public static final String PROPERTY = "biomepicknchoose.smoketest";
+    // In the game folder
+    private static final String RESULT_FILE = "smoketest-result.txt";
+    private static final ResourceLocation RELOAD_BIOME = ResourceLocation.withDefaultNamespace("forest");
     // The biome source is sampled every 64 blocks out to this distance from spawn, without generating chunks
     // Then chunks are generated up to their biomes around the spot nearest to spawn where vanilla would place the biome,
     // and read back from the world
@@ -34,8 +46,14 @@ public final class SmokeTest {
     private static final int SAMPLE_STEP = 64;
     private static final int SAMPLE_Y = 64;
     private static final int CHUNK_RADIUS = 8;
+    // Fails the test if it hasn't finished by then, for example when the reload never completes
+    private static final long TIMEOUT_MILLIS = 5 * 60 * 1000;
 
     private static volatile Boolean passed;
+    // Center of the chunks generated before the reload, which keep their biomes, so the second check avoids them
+    @Nullable
+    private static BlockPos firstCenter;
+    private static boolean reloading;
 
     private SmokeTest() {}
 
@@ -46,30 +64,85 @@ public final class SmokeTest {
     /** Called from {@link BiomeToggles#onServerStarted}. */
     static void onServerStarted(MinecraftServer server) {
         if (!enabled()) return;
-        try {
-            passed = check(server);
-        } catch (RuntimeException e) {
-            LOGGER.error("Smoke test crashed", e);
-            passed = false;
+        Thread watchdog = new Thread(() -> {
+            try {
+                Thread.sleep(TIMEOUT_MILLIS);
+            } catch (InterruptedException e) {
+                return;
+            }
+            LOGGER.error("Smoke test FAILED: timed out");
+            exit(false);
+        }, "Smoke test watchdog");
+        watchdog.setDaemon(true);
+        watchdog.start();
+
+        ResourceLocation id = ResourceLocation.tryParse(System.getProperty(PROPERTY));
+        if (id == null) {
+            LOGGER.error("Smoke test FAILED: invalid biome id {}", System.getProperty(PROPERTY));
+            finish(server, false);
+            return;
         }
-        server.halt(false);
+        if (!run(server, () -> check(server, id, null))) return;
+
+        // Swap which biome is disabled, then apply it with /reload, see onReload
+        BiomeConfig.save(Set.of(id), List.of(RELOAD_BIOME.toString()));
+        reloading = true;
+        LOGGER.info("Smoke test: enabled {} and disabled {} in the config, running /reload", id, RELOAD_BIOME);
+        server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "reload");
+    }
+
+    /** Called from {@link BiomeToggles#onReload}. */
+    static void onReload(MinecraftServer server) {
+        if (!enabled() || !reloading) return;
+        reloading = false;
+        ResourceLocation first = ResourceLocation.tryParse(System.getProperty(PROPERTY));
+        if (BiomeToggles.isDisabled(ResourceKey.create(Registries.BIOME, first))) {
+            LOGGER.error("Smoke test FAILED: {} is still disabled after /reload", first);
+            finish(server, false);
+            return;
+        }
+        if (run(server, () -> check(server, RELOAD_BIOME, firstCenter))) finish(server, true);
     }
 
     /** Called by each loader once a server has stopped. Exits, as the smoke test is all this server was started for. */
     public static void onServerStopped() {
         if (!enabled()) return;
-        if (passed == null) LOGGER.error("Smoke test FAILED: the server stopped before the check ran");
-        LOGGER.info("Smoke test exiting");
-        LogManager.shutdown();
-        Runtime.getRuntime().halt(Boolean.TRUE.equals(passed) ? 0 : 1);
+        if (passed == null) LOGGER.error("Smoke test FAILED: the server stopped before the checks finished");
+        exit(Boolean.TRUE.equals(passed));
     }
 
-    private static boolean check(MinecraftServer server) {
-        ResourceLocation id = ResourceLocation.tryParse(System.getProperty(PROPERTY));
-        if (id == null) {
-            LOGGER.error("Smoke test FAILED: invalid biome id {}", System.getProperty(PROPERTY));
-            return false;
+    // Runs one check, and stops the server unless it passed
+    private static boolean run(MinecraftServer server, BooleanSupplier check) {
+        boolean result;
+        try {
+            result = check.getAsBoolean();
+        } catch (RuntimeException e) {
+            LOGGER.error("Smoke test crashed", e);
+            result = false;
         }
+        if (!result) finish(server, false);
+        return result;
+    }
+
+    private static void finish(MinecraftServer server, boolean result) {
+        passed = result;
+        if (result) LOGGER.info("Smoke test PASSED");
+        server.halt(false);
+    }
+
+    private static void exit(boolean result) {
+        // Checked by the Gradle task, since the exit code is 0 when the game fails before this code runs
+        try {
+            Files.writeString(Path.of(RESULT_FILE), result ? "PASSED" : "FAILED");
+        } catch (IOException e) {
+            LOGGER.error("Couldn't write {}", RESULT_FILE, e);
+        }
+        LOGGER.info("Smoke test exiting");
+        LogManager.shutdown();
+        Runtime.getRuntime().halt(result ? 0 : 1);
+    }
+
+    private static boolean check(MinecraftServer server, ResourceLocation id, @Nullable BlockPos exclude) {
         ResourceKey<Biome> target = ResourceKey.create(Registries.BIOME, id);
         if (!BiomeToggles.isDisabled(target)) {
             LOGGER.error("Smoke test FAILED: {} isn't disabled, check the run's config", id);
@@ -95,7 +168,9 @@ public final class SmokeTest {
                 int qx = QuartPos.fromBlock(pos.getX()), qz = QuartPos.fromBlock(pos.getZ());
                 if (vanilla.findValue(sampler.sample(qx, quartY, qz)).is(target)) {
                     sampleExpected++;
-                    if (nearest == null || pos.distManhattan(spawn) < nearest.distManhattan(spawn)) nearest = pos;
+                    boolean free = exclude == null || Math.max(Math.abs((pos.getX() >> 4) - (exclude.getX() >> 4)),
+                            Math.abs((pos.getZ() >> 4) - (exclude.getZ() >> 4))) > 2 * CHUNK_RADIUS + 1;
+                    if (free && (nearest == null || pos.distManhattan(spawn) < nearest.distManhattan(spawn))) nearest = pos;
                 }
                 if (source.getNoiseBiome(qx, quartY, qz, sampler).is(target)) sampleFound++;
             }
@@ -104,6 +179,7 @@ public final class SmokeTest {
             LOGGER.error("Smoke test FAILED: vanilla wouldn't place {} near spawn either, pick another biome or seed", id);
             return false;
         }
+        if (exclude == null) firstCenter = nearest;
 
         // Biomes stored in newly generated chunks around that spot
         int chunkExpected = 0, chunkFound = 0;
@@ -126,7 +202,7 @@ public final class SmokeTest {
             LOGGER.error("Smoke test FAILED: {} still generates", id);
             return false;
         }
-        LOGGER.info("Smoke test PASSED: {} doesn't generate", id);
+        LOGGER.info("Smoke test: {} doesn't generate", id);
         return true;
     }
 }

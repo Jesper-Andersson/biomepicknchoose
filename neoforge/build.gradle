@@ -43,12 +43,6 @@ neoForge {
     }
 }
 
-prepareSmokeTest {
-    doLast {
-        file("$smokeTestDir/config/${mod_id}-common.toml").text = """disabledBiomes = ["${smokeTestBiome}"]\n"""
-    }
-}
-
 // Dependencies for runtime testing only, not pulled by dependents of this mod
 configurations {
     runtimeClasspath.extendsFrom localRuntime

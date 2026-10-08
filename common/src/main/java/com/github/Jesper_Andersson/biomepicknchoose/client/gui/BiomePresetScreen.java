@@ -1,6 +1,5 @@
 package com.github.Jesper_Andersson.biomepicknchoose.client.gui;
 
-import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeToggles;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -32,6 +31,7 @@ public class BiomePresetScreen extends Screen {
     private static final int RESCAN_INTERVAL = 20;
 
     private final Screen parent;
+    private final Set<ResourceLocation> known;
     private final Set<String> disabled;
     private final Runnable onLoad;
     private PresetList list;
@@ -48,9 +48,10 @@ public class BiomePresetScreen extends Screen {
     private String selected;
 
     /** onLoad runs after a preset changed disabled, before returning to parent. */
-    public BiomePresetScreen(Screen parent, Set<String> disabled, Runnable onLoad) {
+    public BiomePresetScreen(Screen parent, Set<ResourceLocation> known, Set<String> disabled, Runnable onLoad) {
         super(Component.translatable("biomepicknchoose.configuration.presets.title"));
         this.parent = parent;
+        this.known = known;
         this.disabled = disabled;
         this.onLoad = onLoad;
     }
@@ -136,7 +137,7 @@ public class BiomePresetScreen extends Screen {
 
     private void write(String file) {
         Map<ResourceLocation, Boolean> values = new HashMap<>();
-        for (ResourceLocation id : BiomeToggles.knownBiomes()) values.put(id, !disabled.contains(id.toString()));
+        for (ResourceLocation id : known) values.put(id, !disabled.contains(id.toString()));
         BiomePresets.save(file, values);
         selected = file;
         refreshList();
@@ -145,7 +146,6 @@ public class BiomePresetScreen extends Screen {
     private void load() {
         if (selected == null) return;
         Map<ResourceLocation, Boolean> values = BiomePresets.load(selected);
-        Set<ResourceLocation> known = BiomeToggles.knownBiomes();
         int applied = 0;
         for (Map.Entry<ResourceLocation, Boolean> entry : values.entrySet()) {
             if (!known.contains(entry.getKey())) continue;
