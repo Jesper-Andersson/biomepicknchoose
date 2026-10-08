@@ -1,15 +1,25 @@
 name: Publish
 
 on:
+  push:
+    branches: [master]
+    # Commits that don't change the mod itself don't make a release
+    paths-ignore:
+      - '**.md'
+      - '.github/**'
+      - '.gitignore'
   workflow_dispatch:
 
-# Two runs at once would both bump to the same version
+# Two runs at once would both bump to the same version. Later pushes wait, and only the newest waiting one runs,
+# since it checks out the latest master anyway
 concurrency:
   group: publish
   cancel-in-progress: false
 
 jobs:
   publish:
+    # The version bump commit is pushed with GITHUB_TOKEN, which doesn't trigger workflows, but guard against a loop anyway
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Release ')
     runs-on: ubuntu-latest
     permissions:
       contents: write   # push the version commit and tag, create the release
