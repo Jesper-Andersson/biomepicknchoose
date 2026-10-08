@@ -29,6 +29,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: master
+          fetch-depth: 0   # full history and tags, for the changelog
+
+      # Commit messages since the last release, leaving out merges, release commits and commits that only touch the
+      # files the push trigger ignores
+      - name: Changelog
+        id: changelog
+        run: |
+          previous=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          changes=$(git log --no-merges --format='- %s' ${previous:+$previous..}HEAD -- . ':!*.md' ':!.github' ':!.gitignore' | grep -v '^- Release ' || true)
+          [ -n "$changes" ] || changes="- Maintenance release"
+          {
+            echo "text<<CHANGELOG_EOF"
+            echo "$changes"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Changes since ${previous:-the first commit}:"
+          echo "$changes"
 
       - name: Bump patch version
         id: version
@@ -63,11 +80,13 @@ jobs:
           git tag "v${{ steps.version.outputs.version }}"
           git push origin master "v${{ steps.version.outputs.version }}"
 
-      - name: mc-publish
+      - name: Publish to Modrinth and CurseForge
+        id: publish
         uses: Kira-NT/mc-publish@v3.3.1
         with:
           version: ${{ steps.version.outputs.version }}
           name: Biome Pick'n'Choose ${{ steps.version.outputs.version }}
+          changelog: ${{ steps.changelog.outputs.text }}
 
           modrinth-id: iQ3RruEb
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
@@ -75,7 +94,29 @@ jobs:
           curseforge-id: 1724905
           curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
 
-          github-tag: v${{ steps.version.outputs.version }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
           files: build/libs/!(*-@(dev|sources|javadoc)).jar
+
+      # Made here instead of by mc-publish, so the post can link to the files just uploaded to Modrinth and CurseForge
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          CHANGES: ${{ steps.changelog.outputs.text }}
+          MODRINTH_VERSION: ${{ steps.publish.outputs.modrinth-version }}
+          CURSEFORGE_FILE: ${{ steps.publish.outputs.curseforge-version }}
+        run: |
+          shopt -s extglob
+          {
+            echo "## Changes"
+            echo
+            echo "$CHANGES"
+            echo
+            echo "## Download"
+            echo
+            echo "- [Modrinth](https://modrinth.com/mod/biome-picknchoose/version/$MODRINTH_VERSION)"
+            echo "- [CurseForge](https://www.curseforge.com/minecraft/mc-mods/biome-picknchoose/files/$CURSEFORGE_FILE)"
+          } > release-notes.md
+          gh release create "v$VERSION" build/libs/!(*-@(dev|sources|javadoc)).jar \
+            --title "Biome Pick'n'Choose $VERSION" \
+            --notes-file release-notes.md \
+            --verify-tag
