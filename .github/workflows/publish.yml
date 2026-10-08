@@ -1,44 +1,71 @@
 name: Publish
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
+
+# Two runs at once would both bump to the same version
+concurrency:
+  group: publish
+  cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # needed to upload files to the GitHub release
+      contents: write   # push the version commit and tag, create the release
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Bump patch version
+        id: version
+        run: |
+          current=$(grep '^mod_version=' gradle.properties | cut -d= -f2)
+          IFS=. read -r major minor patch <<< "$current"
+          next="$major.$minor.$((patch + 1))"
+          sed -i "s/^mod_version=.*/mod_version=$next/" gradle.properties
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "Bumped $current -> $next"
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21   # use 17 for MC 1.18-1.20.4, 21 for 1.20.5+
+          java-version: 21
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
 
       - name: Build
-        run: ./gradlew build
+        run: |
+          chmod +x ./gradlew
+          ./gradlew build
+
+      # Only after a successful build, so a broken build doesn't use up a version number
+      - name: Commit and tag version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release ${{ steps.version.outputs.version }}"
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin master "v${{ steps.version.outputs.version }}"
 
       - name: mc-publish
         uses: Kira-NT/mc-publish@v3.3.1
         with:
+          version: ${{ steps.version.outputs.version }}
+          name: Biome Pick'n'Choose ${{ steps.version.outputs.version }}
+
           modrinth-id: iQ3RruEb
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
 
           curseforge-id: 1724905
           curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
 
+          github-tag: v${{ steps.version.outputs.version }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
           files: build/libs/!(*-@(dev|sources|javadoc)).jar
