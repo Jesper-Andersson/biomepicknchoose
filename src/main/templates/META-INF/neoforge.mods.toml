@@ -9,6 +9,8 @@ displayName = "${mod_name}"
 displayURL = "https://github.com/Jesper-Andersson"
 authors = "${mod_authors}"
 description = '''${mod_description}'''
+logoFile = "assets/${mod_id}/logo.png"
+logoBlur = false
 # Optional on both sides: players without the mod can join servers that have it, and vice versa
 displayTest = "IGNORE_ALL_VERSION"
 
