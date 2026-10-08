@@ -44,7 +44,7 @@ import java.util.function.Consumer;
  * On/off toggles for every known overworld biome, one tab per mod. Saved to the config on Done: this game's own, or
  * the server's when an operator opened it with {@code /biomepicknchoose config}.
  */
-public class BiomeToggleScreen extends Screen {
+public final class BiomeToggleScreen extends Screen {
     private static final int FOOTER_HEIGHT = 56;
     private static final int TAB_HEADER_HEIGHT = 28;
     private static final int ROW_WIDTH = 310;
