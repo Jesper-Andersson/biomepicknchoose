@@ -1,4 +1,4 @@
-# Biome Pick'n'Choose
+# Biome Pick'n'Choose [![Publish](https://github.com/Jesper-Andersson/biomepicknchoose/actions/workflows/publish.yml/badge.svg?branch=master)](https://github.com/Jesper-Andersson/biomepicknchoose/actions/workflows/publish.yml)
 
 Available on [Modrinth](https://modrinth.com/mod/biome-picknchoose) and [CurseForge](https://www.curseforge.com/minecraft/mc-mods/biome-picknchoose).
 Turn individual overworld biomes on and off, from vanilla and other mods.
