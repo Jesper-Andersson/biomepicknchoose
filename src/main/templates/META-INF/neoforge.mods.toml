@@ -29,6 +29,7 @@ versionRange = "${minecraft_version_range}"
 ordering = "NONE"
 side = "BOTH"
 
+
 # Disabled biomes are also replaced in Lithostitched's biome injectors
 [[dependencies."${mod_id}"]]
 modId = "lithostitched"
