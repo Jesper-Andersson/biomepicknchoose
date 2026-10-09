@@ -1,0 +1,80 @@
+plugins {
+    id 'multiloader-common'
+}
+
+configurations {
+    commonJava{
+        canBeResolved = true
+    }
+    commonResources{
+        canBeResolved = true
+    }
+}
+
+dependencies {
+    compileOnly(project(':common')) {
+        capabilities {
+            requireCapability "$group:$mod_id"
+        }
+    }
+    commonJava project(path: ':common', configuration: 'commonJava')
+    commonResources project(path: ':common', configuration: 'commonResources')
+}
+
+tasks.named('compileJava', JavaCompile) {
+    dependsOn(configurations.commonJava)
+    source(configurations.commonJava)
+}
+
+processResources {
+    dependsOn(configurations.commonResources)
+    from(configurations.commonResources)
+}
+
+tasks.named('javadoc', Javadoc).configure {
+    dependsOn(configurations.commonJava)
+    source(configurations.commonJava)
+}
+
+tasks.named('sourcesJar', Jar) {
+    dependsOn(configurations.commonJava)
+    from(configurations.commonJava)
+    dependsOn(configurations.commonResources)
+    from(configurations.commonResources)
+}
+
+// Smoke test: a headless dedicated server makes a new world with one biome disabled in the mod config, and SmokeTest
+// checks that it doesn't generate, then that /reload applies a changed config. Run with ./gradlew smokeTest. Each
+// loader adds the runSmokeTest run in runs/smoketest
+ext.smokeTestBiome = 'minecraft:plains'
+ext.smokeTestDir = file('runs/smoketest')
+
+tasks.register('prepareSmokeTest') {
+    group = 'verification'
+    description = 'Wipes the smoke test server folder, so the run makes a new world'
+    doLast {
+        delete(smokeTestDir)
+        file("$smokeTestDir/config").mkdirs()
+        file("$smokeTestDir/eula.txt").text = 'eula=true\n'
+        file("$smokeTestDir/config/${mod_id}.json").text = """{ "biomes": { "${smokeTestBiome}": false } }\n"""
+        file("$smokeTestDir/server.properties").text = [
+                'level-seed=12345',
+                'online-mode=false',
+                'server-port=25599',
+                'view-distance=2',
+                'simulation-distance=2',
+        ].join('\n') + '\n'
+    }
+}
+
+// The game exits with 0 when it fails before SmokeTest runs, for example when a mod fails to load, so the result
+// comes from the file SmokeTest writes instead
+tasks.matching { it.name == 'runSmokeTest' }.configureEach {
+    def result = file("$smokeTestDir/smoketest-result.txt")
+    doFirst { delete(result) }
+    doLast {
+        if (!result.isFile() || result.text.trim() != 'PASSED') {
+            throw new GradleException("Smoke test didn't pass, see the log above")
+        }
+    }
+}

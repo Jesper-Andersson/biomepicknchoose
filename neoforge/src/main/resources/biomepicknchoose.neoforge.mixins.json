@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.github.Jesper_Andersson.biomepicknchoose.mixin",
+  "plugin": "com.github.Jesper_Andersson.biomepicknchoose.NeoForgeMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "compat.InjectorBiomeSourceMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

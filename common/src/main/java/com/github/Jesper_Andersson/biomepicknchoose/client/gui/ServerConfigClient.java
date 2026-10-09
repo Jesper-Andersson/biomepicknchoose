@@ -1,0 +1,30 @@
+package com.github.Jesper_Andersson.biomepicknchoose.client.gui;
+
+import com.github.Jesper_Andersson.biomepicknchoose.common.ServerConfigEditing;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
+import net.minecraft.resources.ResourceLocation;
+
+import java.util.Objects;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
+
+/** The client side of {@link ServerConfigEditing}. Only loaded on clients. */
+public final class ServerConfigClient {
+    private ServerConfigClient() {}
+
+    /** Called on the client thread when the server sends its config. */
+    public static void open(ServerConfigEditing.OpenPayload payload) {
+        Minecraft minecraft = Minecraft.getInstance();
+        Set<ResourceLocation> known = payload.known().stream()
+                .map(ResourceLocation::tryParse)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(TreeSet::new));
+        minecraft.setScreen(BiomeToggleScreen.forServer(minecraft.screen, known, payload.disabled(), disabled -> {
+            ClientPacketListener connection = minecraft.getConnection();
+            if (connection != null) connection.send(new ServerboundCustomPayloadPacket(new ServerConfigEditing.SavePayload(disabled)));
+        }));
+    }
+}

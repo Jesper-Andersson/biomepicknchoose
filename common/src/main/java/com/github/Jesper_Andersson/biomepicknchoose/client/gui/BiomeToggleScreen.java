@@ -1,0 +1,498 @@
+package com.github.Jesper_Andersson.biomepicknchoose.client.gui;
+
+import com.github.Jesper_Andersson.biomepicknchoose.client.preview.BiomePreviews;
+import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeConfig;
+import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeToggles;
+import com.github.Jesper_Andersson.biomepicknchoose.platform.Services;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.ContainerObjectSelectionList;
+import net.minecraft.client.gui.components.CycleButton;
+import net.minecraft.client.gui.components.TabButton;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.components.tabs.Tab;
+import net.minecraft.client.gui.components.tabs.TabManager;
+import net.minecraft.client.gui.components.tabs.TabNavigationBar;
+import net.minecraft.client.gui.narration.NarratableEntry;
+import net.minecraft.client.gui.navigation.ScreenRectangle;
+import net.minecraft.client.gui.screens.ConfirmScreen;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.locale.Language;
+import net.minecraft.network.chat.CommonComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.FormattedCharSequence;
+import org.jetbrains.annotations.Nullable;
+
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.function.Consumer;
+
+/**
+ * On/off toggles for every known overworld biome, with one tab per mod. Done saves them to this game's config, or to
+ * the server's when an operator opened the screen with {@code /biomepicknchoose config}.
+ */
+public final class BiomeToggleScreen extends Screen {
+    private static final int FOOTER_HEIGHT = 56;
+    private static final int TAB_HEADER_HEIGHT = 28;
+    private static final int ROW_WIDTH = 310;
+    private static final int NARROW_ROW_WIDTH = 250;
+    // Low enough for automatic GUI scale, which makes the screen 426 to 480 wide on common monitors
+    private static final int PANEL_MIN_SCREEN_WIDTH = 400;
+    // Rows narrower than this get a smaller thumbnail and toggle, to leave room for the name
+    private static final int COMPACT_ROW_WIDTH = 240;
+    private static final int ROW_HEIGHT = 40;
+    // Room left and right of a tab title, the narrowest tab, and the space kept free beside the tab bar
+    private static final int TAB_PADDING = 16;
+    private static final int TAB_MIN_WIDTH = 60;
+    private static final int TAB_MARGIN = 28;
+    // Rows are drawn 2 pixels right of where the selection outline starts, so keep this much free on the right to not
+    // cover the outline
+    private static final int ROW_RIGHT_INSET = 4;
+    private static final int PANEL_TEXT_HEIGHT = 26;
+    private static final int PANEL_BUTTON_HEIGHT = 24;
+    private static final int HINT_COLOR = 0xA0A0A0;
+    // Thumbnails in the rows, half the size of the pictures BiomePreviews makes, so they are sharp at GUI scale 2
+    private static final int THUMBNAIL_WIDTH = BiomePreviews.THUMBNAIL_WIDTH / 2;
+    private static final int THUMBNAIL_HEIGHT = BiomePreviews.THUMBNAIL_HEIGHT / 2;
+    private static final int COMPACT_THUMBNAIL_WIDTH = 48;
+    private static final int COMPACT_THUMBNAIL_HEIGHT = 27;
+    private static final Component ON = CommonComponents.OPTION_ON.copy().withStyle(ChatFormatting.GREEN);
+    private static final Component OFF = CommonComponents.OPTION_OFF.copy().withStyle(ChatFormatting.RED);
+
+    private final Screen parent;
+    private final Set<String> disabled;
+    private final Set<ResourceLocation> known;
+    private final Consumer<List<String>> onSave;
+    // Editing the config of the server this client is connected to
+    private final boolean remote;
+    private final TabManager tabManager = new TabManager(this::addRenderableWidget, this::removeWidget);
+    private TabNavigationBar tabNavigationBar;
+    private Tab[] tabs = new Tab[0];
+    private Button presetsButton;
+    private Button doneButton;
+    private Button cancelButton;
+    private Button removePreview;
+    // Biome the remove button applies to, set while it is shown
+    @Nullable
+    private ResourceLocation removeTarget;
+    // Restored when the widgets are rebuilt after loading a preset
+    private int selectedTab;
+    // Shared by all tabs
+    private SortMode sortMode = SortMode.ALPHABETICAL;
+    @Nullable
+    private ResourceLocation lastShownId;
+    private boolean hasKnownBiomes;
+    // Preview image area, or null when the screen is too narrow for the side panel
+    @Nullable
+    private ScreenRectangle preview;
+
+    /** Edits this game's config. */
+    public BiomeToggleScreen(Screen parent) {
+        this(parent, Component.translatable("biomepicknchoose.configuration.title"), BiomeToggles.knownBiomes(),
+                BiomeConfig.disabledBiomes(), null, false);
+    }
+
+    /** Edits the server's config, from the biomes it sent. onSave sends the disabled biomes back. */
+    public static BiomeToggleScreen forServer(@Nullable Screen parent, Set<ResourceLocation> known, List<String> disabled, Consumer<List<String>> onSave) {
+        return new BiomeToggleScreen(parent, Component.translatable("biomepicknchoose.configuration.title.server"), known, disabled, onSave, true);
+    }
+
+    private BiomeToggleScreen(@Nullable Screen parent, Component title, Set<ResourceLocation> known, List<String> disabled,
+                              @Nullable Consumer<List<String>> onSave, boolean remote) {
+        super(title);
+        this.parent = parent;
+        this.known = known;
+        this.disabled = new HashSet<>(disabled);
+        this.onSave = onSave != null ? onSave : biomes -> BiomeConfig.save(known, biomes);
+        this.remote = remote;
+    }
+
+    @Override
+    protected void init() {
+        // The server sends its own biomes, so they are always complete
+        hasKnownBiomes = remote || Files.isRegularFile(BiomeToggles.knownBiomesFile());
+
+        Map<String, List<ResourceLocation>> byNamespace = new TreeMap<>(
+                Comparator.comparingInt(BiomeToggleScreen::namespaceOrder).thenComparing(Comparator.naturalOrder()));
+        for (ResourceLocation id : known) {
+            byNamespace.computeIfAbsent(id.getNamespace(), ns -> new ArrayList<>()).add(id);
+        }
+        tabs = byNamespace.entrySet().stream()
+                .map(entry -> new BiomeTab(tabTitle(entry.getKey()), entry.getValue()))
+                .toArray(Tab[]::new);
+
+        tabNavigationBar = TabNavigationBar.builder(tabManager, width).addTabs(tabs).build();
+        addRenderableWidget(tabNavigationBar);
+        presetsButton = addRenderableWidget(Button.builder(Component.translatable("biomepicknchoose.configuration.presets"), button -> openPresets()).width(100).build());
+        doneButton = addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, button -> save()).width(100).build());
+        cancelButton = addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, button -> onClose()).width(100).build());
+        removePreview = addRenderableWidget(Button.builder(Component.translatable("biomepicknchoose.configuration.preview.remove"), button -> confirmRemovePreview()).width(120).build());
+        removePreview.visible = false;
+        int tab = selectedTab < tabs.length ? selectedTab : 0;
+        tabNavigationBar.selectTab(tab, false);
+        if (lastShownId != null && tabs.length > 0 && tabs[tab] instanceof BiomeTab biomeTab) biomeTab.list.show(lastShownId);
+        repositionElements();
+    }
+
+    @Override
+    protected void repositionElements() {
+        if (tabNavigationBar == null) return;
+        tabNavigationBar.setWidth(width);
+        tabNavigationBar.arrangeElements();
+        arrangeTabs();
+        int top = tabNavigationBar.getRectangle().bottom();
+        int areaHeight = height - FOOTER_HEIGHT - top;
+        preview = null;
+        if (width >= PANEL_MIN_SCREEN_WIDTH) {
+            int half = width / 2;
+            int previewWidth = Math.min(half - 30, (areaHeight - 8 - PANEL_TEXT_HEIGHT - PANEL_BUTTON_HEIGHT) * 16 / 9);
+            if (previewWidth > 0) preview = new ScreenRectangle(half + 10, top + 4, previewWidth, previewWidth * 9 / 16);
+        }
+        tabManager.setTabArea(new ScreenRectangle(0, top, width, areaHeight));
+        presetsButton.setPosition(width / 2 - 155, height - 28);
+        doneButton.setPosition(width / 2 - 50, height - 28);
+        cancelButton.setPosition(width / 2 + 55, height - 28);
+    }
+
+    // Vanilla gives every tab the same width within 400 pixels, which cuts long mod names off early. Instead, each tab
+    // fits its title. When they don't all fit, the widest ones shrink to the same width and the rest keep theirs
+    private void arrangeTabs() {
+        List<TabButton> buttons = tabNavigationBar.children().stream()
+                .filter(TabButton.class::isInstance).map(TabButton.class::cast).toList();
+        if (buttons.isEmpty()) return;
+        int[] widths = buttons.stream()
+                .mapToInt(button -> Math.max(TAB_MIN_WIDTH, font.width(button.getMessage()) + TAB_PADDING))
+                .toArray();
+        int cap = tabWidthCap(widths, width - TAB_MARGIN);
+        int total = 0;
+        for (int i = 0; i < widths.length; i++) {
+            // Even widths, like vanilla
+            widths[i] = Math.min(widths[i], cap) & ~1;
+            total += widths[i];
+        }
+        int x = (width - total) / 2 & ~1;
+        for (int i = 0; i < buttons.size(); i++) {
+            buttons.get(i).setWidth(widths[i]);
+            buttons.get(i).setX(x);
+            x += widths[i];
+        }
+    }
+
+    // The largest width that every tab can be limited to so they fit in available, or no limit if they already fit
+    private static int tabWidthCap(int[] widths, int available) {
+        int[] sorted = widths.clone();
+        Arrays.sort(sorted);
+        int remaining = available;
+        for (int i = 0; i < sorted.length; i++) {
+            int left = sorted.length - i;
+            if (sorted[i] * left > remaining) return Math.max(remaining / left, 2);
+            remaining -= sorted[i];
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        return tabNavigationBar.keyPressed(keyCode) || super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        BiomeRow row = preview != null && tabManager.getCurrentTab() instanceof BiomeTab tab ? tab.list.previewBiome() : null;
+        // Only for captured pictures: a shipped picture would still show after removing the file
+        removeTarget = row != null && BiomePreviews.isCaptured(row.id) ? row.id : null;
+        removePreview.visible = removeTarget != null;
+        removePreview.active = removeTarget != null;
+        if (removeTarget != null) removePreview.setPosition(preview.left(), preview.bottom() + PANEL_TEXT_HEIGHT + 2);
+        super.render(guiGraphics, mouseX, mouseY, partialTick);
+        if (row != null) renderPreview(guiGraphics, row);
+        int y = height - FOOTER_HEIGHT + 6;
+        guiGraphics.drawCenteredString(font, Component.translatable(remote ? "biomepicknchoose.configuration.hint.apply.server" : "biomepicknchoose.configuration.hint.apply"), width / 2, y, HINT_COLOR);
+        if (!hasKnownBiomes) {
+            guiGraphics.drawCenteredString(font, Component.translatable("biomepicknchoose.configuration.hint.load_world"), width / 2, y + 11, HINT_COLOR);
+        }
+    }
+
+    private void renderPreview(GuiGraphics guiGraphics, BiomeRow row) {
+        int x = preview.left();
+        int y = preview.top();
+        int w = preview.width();
+        int h = preview.height();
+        guiGraphics.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF000000 | HINT_COLOR);
+        ResourceLocation texture = BiomePreviews.textureFor(row.id);
+        if (texture != null) {
+            guiGraphics.blit(texture, x, y, 0, 0, w, h, w, h);
+        } else {
+            guiGraphics.fill(x, y, x + w, y + h, 0xFF101010);
+            List<FormattedCharSequence> lines = font.split(Component.translatable("biomepicknchoose.configuration.preview.none"), w - 16);
+            int lineY = y + (h - lines.size() * font.lineHeight) / 2;
+            for (FormattedCharSequence line : lines) {
+                guiGraphics.drawCenteredString(font, line, x + w / 2, lineY, HINT_COLOR);
+                lineY += font.lineHeight;
+            }
+        }
+        guiGraphics.drawString(font, Language.getInstance().getVisualOrder(font.substrByWidth(row.name, w)), x, y + h + 5, 0xFFFFFF);
+        guiGraphics.drawString(font, row.id.toString(), x, y + h + 16, HINT_COLOR);
+    }
+
+    @Override
+    public void removed() {
+        BiomePreviews.release();
+    }
+
+    @Override
+    public void onClose() {
+        minecraft.setScreen(parent);
+    }
+
+    private void confirmRemovePreview() {
+        ResourceLocation id = removeTarget;
+        if (id == null) return;
+        minecraft.setScreen(new ConfirmScreen(confirmed -> {
+            if (confirmed) BiomePreviews.delete(id);
+            minecraft.setScreen(this);
+        }, title, Component.translatable("biomepicknchoose.configuration.preview.remove.confirm", id.toString())));
+    }
+
+    private void openPresets() {
+        minecraft.setScreen(new BiomePresetScreen(this, known, disabled, this::reloadRows));
+    }
+
+    // The rows read their toggle state from disabled when created, so rebuild them after a preset changed it
+    private void reloadRows() {
+        int index = Arrays.asList(tabs).indexOf(tabManager.getCurrentTab());
+        selectedTab = Math.max(index, 0);
+        lastShownId = tabManager.getCurrentTab() instanceof BiomeTab tab && tab.list.getSelected() != null ? tab.list.getSelected().id : null;
+        rebuildWidgets();
+    }
+
+    private void setSortMode(SortMode mode) {
+        sortMode = mode;
+        for (Tab tab : tabs) {
+            if (tab instanceof BiomeTab biomeTab) {
+                biomeTab.sortButton.setValue(mode);
+                biomeTab.list.sort(mode);
+            }
+        }
+    }
+
+    private void save() {
+        onSave.accept(disabled.stream().sorted().toList());
+        onClose();
+    }
+
+    // Minecraft first, then other mods alphabetically
+    private static int namespaceOrder(String namespace) {
+        return namespace.equals(ResourceLocation.DEFAULT_NAMESPACE) ? 0 : 1;
+    }
+
+    private static Component tabTitle(String namespace) {
+        return Services.PLATFORM.getModName(namespace)
+                .<Component>map(Component::literal)
+                .orElseGet(() -> Component.translatable("biomepicknchoose.configuration.tab.fallback", namespace));
+    }
+
+    private final class BiomeTab implements Tab {
+        private final Component title;
+        private final BiomeList list;
+        private final Button enableAll;
+        private final Button disableAll;
+        private final CycleButton<SortMode> sortButton;
+
+        BiomeTab(Component title, List<ResourceLocation> biomes) {
+            this.title = title;
+            this.list = new BiomeList(minecraft, biomes);
+            this.enableAll = Button.builder(Component.translatable("biomepicknchoose.configuration.enable_all"), button -> list.setAll(true)).width(150).build();
+            this.disableAll = Button.builder(Component.translatable("biomepicknchoose.configuration.disable_all"), button -> list.setAll(false)).width(150).build();
+            this.sortButton = CycleButton.<SortMode>builder(mode -> Component.translatable(mode.key))
+                    .withValues(SortMode.values())
+                    .withInitialValue(sortMode)
+                    .create(0, 0, 100, 20, Component.translatable("biomepicknchoose.configuration.sort"), (button, mode) -> setSortMode(mode));
+        }
+
+        @Override
+        public Component getTabTitle() {
+            return title;
+        }
+
+        @Override
+        public void visitChildren(Consumer<AbstractWidget> consumer) {
+            consumer.accept(enableAll);
+            consumer.accept(disableAll);
+            consumer.accept(sortButton);
+            consumer.accept(list);
+        }
+
+        @Override
+        public void doLayout(ScreenRectangle area) {
+            // With the side panel, the list and its buttons take the left half
+            int listWidth = preview != null ? area.width() / 2 : area.width();
+            int buttonWidth = Math.min(100, (listWidth - 40) / 3);
+            int left = area.left() + (listWidth - 3 * buttonWidth - 10) / 2;
+            enableAll.setWidth(buttonWidth);
+            disableAll.setWidth(buttonWidth);
+            sortButton.setWidth(buttonWidth);
+            enableAll.setPosition(left, area.top() + 4);
+            disableAll.setPosition(left + buttonWidth + 5, area.top() + 4);
+            sortButton.setPosition(left + 2 * (buttonWidth + 5), area.top() + 4);
+            // Leaves room for the scroll bar
+            list.rowWidth = Math.min(preview != null ? NARROW_ROW_WIDTH : ROW_WIDTH, listWidth - 24);
+            list.updateSizeAndPosition(listWidth, area.height() - TAB_HEADER_HEIGHT, area.top() + TAB_HEADER_HEIGHT);
+            list.setX(area.left());
+        }
+    }
+
+    // The selected row is shown in the side panel. Picked by clicking a row or with the keyboard, not by hovering, so
+    // moving the mouse to the panel doesn't change it
+    private final class BiomeList extends ContainerObjectSelectionList<BiomeRow> {
+        private int rowWidth = ROW_WIDTH;
+
+        BiomeList(Minecraft minecraft, List<ResourceLocation> biomes) {
+            super(minecraft, 0, 0, 0, ROW_HEIGHT);
+            biomes.stream().map(BiomeRow::new).forEach(this::addEntry);
+            sort(sortMode);
+        }
+
+        // Only on picking a mode, so a row doesn't move away right after toggling it
+        void sort(SortMode mode) {
+            BiomeRow selected = getSelected();
+            List<BiomeRow> rows = new ArrayList<>(children());
+            rows.sort(mode.comparator);
+            replaceEntries(rows);
+            setSelected(selected);
+        }
+
+        void setAll(boolean enabled) {
+            children().forEach(row -> row.setEnabled(enabled));
+        }
+
+        void show(ResourceLocation id) {
+            children().stream().filter(row -> row.id.equals(id)).findFirst().ifPresent(this::setSelected);
+        }
+
+        @Nullable
+        BiomeRow previewBiome() {
+            BiomeRow selected = getSelected();
+            if (selected != null) return selected;
+            return children().isEmpty() ? null : getFirstElement();
+        }
+
+        // Focusing a row selects it. Keep the selection when the focus moves elsewhere, like to Enable all
+        @Override
+        public void setFocused(@Nullable GuiEventListener focused) {
+            BiomeRow selected = getSelected();
+            super.setFocused(focused);
+            if (focused == null) setSelected(selected);
+        }
+
+        // ContainerObjectSelectionList never highlights a row
+        @Override
+        protected boolean isSelectedItem(int index) {
+            return getSelected() != null && children().get(index) == getSelected();
+        }
+
+        @Override
+        public int getRowWidth() {
+            return rowWidth;
+        }
+    }
+
+    private final class BiomeRow extends ContainerObjectSelectionList.Entry<BiomeRow> {
+        private final ResourceLocation id;
+        private final Component name;
+        private final CycleButton<Boolean> toggle;
+
+        BiomeRow(ResourceLocation id) {
+            this.id = id;
+            this.name = Component.translatableWithFallback("biome." + id.getNamespace() + "." + id.getPath(), id.toString());
+            this.toggle = CycleButton.booleanBuilder(ON, OFF)
+                    .withInitialValue(!disabled.contains(id.toString()))
+                    .displayOnlyValue()
+                    .withTooltip(enabled -> Tooltip.create(Component.literal(id.toString())))
+                    .create(0, 0, 60, 20, name, (button, enabled) -> updateDisabled(enabled));
+        }
+
+        void setEnabled(boolean enabled) {
+            toggle.setValue(enabled);
+            updateDisabled(enabled);
+        }
+
+        private void updateDisabled(boolean enabled) {
+            if (enabled) disabled.remove(id.toString());
+            else disabled.add(id.toString());
+        }
+
+        // Clicking anywhere on the row selects it, not only on the toggle
+        @Override
+        public boolean mouseClicked(double mouseX, double mouseY, int button) {
+            super.mouseClicked(mouseX, mouseY, button);
+            return button == 0;
+        }
+
+        @Override
+        public void render(GuiGraphics guiGraphics, int index, int top, int left, int width, int height,
+                           int mouseX, int mouseY, boolean hovering, float partialTick) {
+            boolean compact = width < COMPACT_ROW_WIDTH;
+            int thumbnailWidth = compact ? COMPACT_THUMBNAIL_WIDTH : THUMBNAIL_WIDTH;
+            int thumbnailHeight = compact ? COMPACT_THUMBNAIL_HEIGHT : THUMBNAIL_HEIGHT;
+            toggle.setWidth(compact ? 44 : 60);
+            int thumbnailTop = top + (height - thumbnailHeight) / 2;
+            ResourceLocation thumbnail = BiomePreviews.thumbnailFor(id);
+            if (thumbnail != null) {
+                guiGraphics.blit(thumbnail, left, thumbnailTop, thumbnailWidth, thumbnailHeight, 0, 0,
+                        BiomePreviews.THUMBNAIL_WIDTH, BiomePreviews.THUMBNAIL_HEIGHT, BiomePreviews.THUMBNAIL_WIDTH, BiomePreviews.THUMBNAIL_HEIGHT);
+            } else {
+                guiGraphics.fill(left, thumbnailTop, left + thumbnailWidth, thumbnailTop + thumbnailHeight, 0xFF101010);
+            }
+            int nameLeft = left + thumbnailWidth + 6;
+            int maxNameWidth = width - ROW_RIGHT_INSET - thumbnailWidth - 6 - toggle.getWidth() - 6;
+            guiGraphics.drawString(font, Language.getInstance().getVisualOrder(font.substrByWidth(name, maxNameWidth)),
+                    nameLeft, top + (height - font.lineHeight) / 2, 0xFFFFFF);
+            toggle.setPosition(left + width - ROW_RIGHT_INSET - toggle.getWidth(), top + (height - toggle.getHeight()) / 2);
+            toggle.render(guiGraphics, mouseX, mouseY, partialTick);
+        }
+
+        @Override
+        public List<? extends GuiEventListener> children() {
+            // Not List.of: a row selected by clicking beside the toggle has nothing focused inside it, and the arrow key
+            // navigation then looks up the index of null, which List.of rejects
+            return Collections.singletonList(toggle);
+        }
+
+        @Override
+        public List<? extends NarratableEntry> narratables() {
+            return List.of(toggle);
+        }
+    }
+
+    private enum SortMode {
+        ALPHABETICAL("alphabetical", Comparator.comparing(BiomeToggleScreen::sortName)),
+        ENABLED_FIRST("enabled_first", Comparator.<BiomeRow, Boolean>comparing(row -> !row.toggle.getValue()).thenComparing(BiomeToggleScreen::sortName)),
+        DISABLED_FIRST("disabled_first", Comparator.<BiomeRow, Boolean>comparing(row -> row.toggle.getValue()).thenComparing(BiomeToggleScreen::sortName));
+
+        private final String key;
+        private final Comparator<BiomeRow> comparator;
+
+        SortMode(String name, Comparator<BiomeRow> comparator) {
+            this.key = "biomepicknchoose.configuration.sort." + name;
+            this.comparator = comparator;
+        }
+    }
+
+    private static String sortName(BiomeRow row) {
+        return row.name.getString();
+    }
+}

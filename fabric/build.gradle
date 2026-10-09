@@ -1,0 +1,72 @@
+plugins {
+    id 'multiloader-loader'
+    id 'fabric-loom'
+}
+
+repositories {
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = 'TerraformersMC'
+                url = 'https://maven.terraformersmc.com/releases'
+            }
+        }
+        filter { includeGroup('com.terraformersmc') }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    mappings loom.layered {
+        officialMojangMappings()
+        parchment("org.parchmentmc.data:parchment-${parchment_minecraft}:${parchment_version}@zip")
+    }
+    modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
+
+    // Optional: adds the config button to Mod Menu's mod list
+    modCompileOnly "com.terraformersmc:modmenu:${modmenu_version}"
+    modLocalRuntime "com.terraformersmc:modmenu:${modmenu_version}"
+
+    // Optional: the compat mixin wraps Lithostitched's biome injectors. Only applied when it is installed
+    // Compiles against the NeoForge jar, which is already in Mojang names: the Fabric jar uses a class tweaker, which
+    // this Loom version can't read. The classes the mixin touches are the same on both loaders
+    compileOnly "maven.modrinth:lithostitched:${lithostitched_version}-neoforge-${minecraft_version.substring(2)}"
+
+    // To test with Lithostitched, put its Fabric jar in runs/client/mods: this Loom version can't remap it
+}
+
+loom {
+    def aw = project(':common').file("src/main/resources/${mod_id}.accesswidener")
+    if (aw.exists()) {
+        accessWidenerPath.set(aw)
+    }
+    mixin {
+        defaultRefmapName.set("${mod_id}.refmap.json")
+    }
+    runs {
+        client {
+            client()
+            setConfigName('Fabric Client')
+            ideConfigGenerated(true)
+            runDir('runs/client')
+        }
+        server {
+            server()
+            setConfigName('Fabric Server')
+            ideConfigGenerated(true)
+            runDir('runs/server')
+        }
+        smokeTest {
+            server()
+            setConfigName('Fabric Smoke Test')
+            ideConfigGenerated(false)
+            runDir('runs/smoketest')
+            vmArg("-Dbiomepicknchoose.smoketest=${smokeTestBiome}")
+        }
+    }
+}
+
+tasks.named('runSmokeTest') {
+    dependsOn('prepareSmokeTest')
+}

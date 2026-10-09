@@ -1,0 +1,41 @@
+{
+    "schemaVersion": 1,
+    "id": "${mod_id}",
+    "version": "${version}",
+    "name": "${mod_name}",
+    "description": "${description}",
+    "authors": [
+        "${mod_author}"
+    ],
+    "contact": {
+        "homepage": "https://modrinth.com/mod/biome-picknchoose",
+        "sources": "https://github.com/Jesper-Andersson/biomepicknchoose"
+    },
+    "license": "${license}",
+    "icon": "assets/${mod_id}/logo.png",
+    "environment": "*",
+    "entrypoints": {
+        "main": [
+            "com.github.Jesper_Andersson.biomepicknchoose.BiomePickNChooseFabric"
+        ],
+        "client": [
+            "com.github.Jesper_Andersson.biomepicknchoose.BiomePickNChooseFabricClient"
+        ],
+        "modmenu": [
+            "com.github.Jesper_Andersson.biomepicknchoose.ModMenuIntegration"
+        ]
+    },
+    "mixins": [
+        "${mod_id}.mixins.json",
+        "${mod_id}.fabric.mixins.json"
+    ],
+    "depends": {
+        "fabricloader": ">=${fabric_loader_version}",
+        "fabric-api": "*",
+        "minecraft": "${minecraft_version}",
+        "java": ">=${java_version}"
+    },
+    "breaks": {
+        "lithostitched": "<1.8.0"
+    }
+}
