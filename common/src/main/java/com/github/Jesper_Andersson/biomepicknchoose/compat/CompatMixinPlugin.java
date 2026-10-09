@@ -8,18 +8,21 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Only applies the mixins in {@code mixin.compat} when Lithostitched, the mod they target, is installed. Each loader
- * checks for it its own way, since mixins load before the regular mod lists exist.
+ * Only applies the mixins in {@code mixin.compat} when Lithostitched, the mod they target, is installed in a version
+ * they support. Each loader checks for it its own way, since mixins load before the regular mod lists exist.
  */
 public abstract class CompatMixinPlugin implements IMixinConfigPlugin {
     private static final String COMPAT_PACKAGE = "com.github.Jesper_Andersson.biomepicknchoose.mixin.compat.";
 
-    protected abstract boolean isModLoaded(String modId);
+    // The oldest Lithostitched with the InjectorBiomeSource fields and methods the compat mixin targets
+    private static final String LITHOSTITCHED_MIN_VERSION = "1.7.2";
+
+    protected abstract boolean isModLoaded(String modId, String minVersion);
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         if (!mixinClassName.startsWith(COMPAT_PACKAGE)) return true;
-        return isModLoaded("lithostitched");
+        return isModLoaded("lithostitched", LITHOSTITCHED_MIN_VERSION);
     }
 
     @Override
