@@ -20,8 +20,9 @@ concurrency:
 
 jobs:
   publish:
-    # The version bump commit is pushed with GITHUB_TOKEN, which doesn't trigger workflows, but guard against a loop anyway
-    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Release ')
+    # The version bump commit is pushed with GITHUB_TOKEN, which doesn't trigger workflows, but guard against a loop anyway.
+    # Checks who pushed, not the message, so other commits starting with "Release" still release
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: write   # push the version commit and tag, create the release
@@ -45,7 +46,7 @@ jobs:
           MINECRAFT: ${{ steps.minecraft.outputs.version }}
         run: |
           previous=$(git describe --tags --abbrev=0 --match "v*+$MINECRAFT" 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || true)
-          changes=$(git log --no-merges --format='- %s' ${previous:+$previous..}HEAD -- . ':!*.md' ':!.github' ':!.gitignore' | grep -v '^- Release ' || true)
+          changes=$(git log --no-merges --format='- %s' ${previous:+$previous..}HEAD -- . ':!*.md' ':!.github' ':!.gitignore' | grep -v -E '^- Release [0-9]' || true)
           [ -n "$changes" ] || changes="- Maintenance release"
           {
             echo "text<<CHANGELOG_EOF"
