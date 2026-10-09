@@ -1,6 +1,6 @@
 package com.github.Jesper_Andersson.biomepicknchoose.client.preview;
 
-import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeToggles;
+import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeCatalog;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
@@ -41,7 +41,7 @@ public final class BiomePreviewCommand<S> {
                 .executes(context -> capture(context, null, missingOnly))
                 .then(RequiredArgumentBuilder.<S, String>argument("namespace", StringArgumentType.word())
                         .suggests((context, builder) -> SharedSuggestionProvider.suggest(
-                                BiomeToggles.allKnown(BiomeToggles.knownBiomes()).stream().map(Identifier::getNamespace).distinct(), builder))
+                                BiomeCatalog.local().allKnown().stream().map(Identifier::getNamespace).distinct(), builder))
                         .executes(context -> capture(context, StringArgumentType.getString(context, "namespace"), missingOnly)));
     }
 

@@ -13,7 +13,6 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
-import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.PermissionCheck;
 import org.slf4j.Logger;
@@ -22,6 +21,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Lets an operator edit the server's config from a client that has the mod. {@code /biomepicknchoose config} sends the
@@ -38,8 +38,8 @@ public final class ServerConfigEditing {
     private ServerConfigEditing() {}
 
     /**
-     * Server to client: the biomes the server knows and the ones it can place, per dimension, the ones its config
-     * disables, and its cave biomes.
+     * Server to client: the server's {@link BiomeCatalog} and the biomes its config disables. Biome ids are sent as
+     * strings, and dimensions by {@link BiomeDimension#key()}.
      */
     public record OpenPayload(Map<String, List<String>> known, Map<String, List<String>> generating, List<String> disabled,
                               List<String> caves, List<String> water) implements CustomPacketPayload {
@@ -49,6 +49,15 @@ public final class ServerConfigEditing {
         public static final StreamCodec<ByteBuf, OpenPayload> CODEC = StreamCodec.composite(
                 BY_DIMENSION, OpenPayload::known, BY_DIMENSION, OpenPayload::generating, IDS, OpenPayload::disabled,
                 IDS, OpenPayload::caves, IDS, OpenPayload::water, OpenPayload::new);
+
+        public static OpenPayload of(BiomeCatalog catalog, List<String> disabled) {
+            return new OpenPayload(toStrings(catalog.known()), toStrings(catalog.generating()), disabled,
+                    toStrings(catalog.caves()), toStrings(catalog.water()));
+        }
+
+        public BiomeCatalog catalog() {
+            return new BiomeCatalog(toIds(known), toIds(generating), Identifiers.parseAll(caves), Identifiers.parseAll(water));
+        }
 
         @Override
         public Type<OpenPayload> type() {
@@ -78,12 +87,8 @@ public final class ServerConfigEditing {
                                 "Install Biome Pick'n'Choose on your client to edit the server's biomes"));
                         return 0;
                     }
-                    MinecraftServer server = player.level().getServer();
-                    List<String> caves = CaveBiomes.fromServer(server).stream().map(Identifier::toString).toList();
-                    List<String> water = WaterBiomes.fromServer(server).stream().map(Identifier::toString).toList();
-                    player.connection.send(new ClientboundCustomPayloadPacket(new OpenPayload(
-                            byDimension(BiomeToggles.serverKnownBiomes(server)), byDimension(BiomeToggles.serverGeneratingBiomes(server)),
-                            BiomeConfig.disabledBiomes(), caves, water)));
+                    BiomeCatalog catalog = BiomeCatalog.server(player.level().getServer());
+                    player.connection.send(new ClientboundCustomPayloadPacket(OpenPayload.of(catalog, BiomeConfig.disabledBiomes())));
                     return 1;
                 })));
     }
@@ -95,15 +100,29 @@ public final class ServerConfigEditing {
             LOGGER.warn("{} tried to change the biome config without permission", player.getGameProfile().name());
             return;
         }
-        BiomeConfig.save(BiomeToggles.allKnown(BiomeToggles.serverKnownBiomes(player.level().getServer())), payload.disabled());
+        BiomeConfig.save(BiomeCatalog.server(player.level().getServer()).allKnown(), payload.disabled());
         LOGGER.info("{} changed the biome config, disabled biomes: {}", player.getGameProfile().name(), payload.disabled());
         player.sendSystemMessage(Component.translatableWithFallback("biomepicknchoose.server_config.saved",
                 "Saved the server's biome config. Run /reload to apply it to newly generated chunks"));
     }
 
-    private static Map<String, List<String>> byDimension(Map<BiomeDimension, Set<Identifier>> biomes) {
+    private static List<String> toStrings(Set<Identifier> ids) {
+        return ids.stream().map(Identifier::toString).toList();
+    }
+
+    private static Map<String, List<String>> toStrings(Map<BiomeDimension, Set<Identifier>> byDimension) {
         Map<String, List<String>> result = new HashMap<>();
-        biomes.forEach((dimension, ids) -> result.put(dimension.key(), ids.stream().map(Identifier::toString).toList()));
+        byDimension.forEach((dimension, ids) -> result.put(dimension.key(), toStrings(ids)));
+        return result;
+    }
+
+    // Leaves out dimensions this version can't name
+    private static Map<BiomeDimension, Set<Identifier>> toIds(Map<String, List<String>> byDimension) {
+        Map<BiomeDimension, Set<Identifier>> result = new TreeMap<>();
+        byDimension.forEach((key, ids) -> {
+            BiomeDimension dimension = BiomeDimension.byKey(key);
+            if (dimension != null) result.put(dimension, Identifiers.parseAll(ids));
+        });
         return result;
     }
 }

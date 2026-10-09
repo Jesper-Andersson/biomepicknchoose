@@ -1,5 +1,6 @@
 package com.github.Jesper_Andersson.biomepicknchoose.client.preview;
 
+import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeCatalog;
 import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeDimension;
 import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeToggles;
 import com.github.Jesper_Andersson.biomepicknchoose.common.CaveBiomes;
@@ -35,12 +36,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -69,6 +70,10 @@ public final class BiomePreviewCapture {
     // How far a cave camera looks for open space in each direction
     private static final int CAVE_VIEW_DISTANCE = 32;
     private static final float CAVE_PITCH = 10;
+    // A cave camera looks in this many directions, and picks the spot where the longest view, counted this many
+    // times, plus the views in the other directions is largest. So a room beats the end of a long tunnel
+    private static final int VIEW_DIRECTIONS = 8;
+    private static final int LONGEST_VIEW_WEIGHT = 4;
     // How far below a cave camera, and below the space it looks into, there must be solid ground
     private static final int CAMERA_GROUND_DEPTH = 6;
     private static final int VIEW_GROUND_DEPTH = 12;
@@ -92,6 +97,9 @@ public final class BiomePreviewCapture {
 
     /** A biome to photograph, the dimension to look for it in, and whether to look underground. */
     private record Target(Holder<Biome> biome, BiomeDimension dimension, boolean cave) {}
+
+    /** Where a cave camera could stand: how much open space it sees, and the direction it sees the most in. */
+    private record Viewpoint(int score, float yaw) {}
 
     private record Saved(ResourceKey<Level> dimension, double x, double y, double z, float yaw, float pitch,
                          GameType gameMode, boolean daylight, boolean weatherCycle, long dayTime,
@@ -164,24 +172,7 @@ public final class BiomePreviewCapture {
         if (server == null || minecraft.player == null) return Component.translatable("biomepicknchoose.command.preview.singleplayer_only");
         if (active != null) return Component.translatable("biomepicknchoose.command.preview.running");
 
-        // Each dimension in turn, a biome placed in several only in the first
-        Set<Identifier> caves = CaveBiomes.fromServer(server);
-        Set<Identifier> seen = new HashSet<>();
-        List<Target> targets = new ArrayList<>();
-        for (BiomeDimension dimension : BiomeToggles.serverDimensions(server)) {
-            ServerLevel level = server.getLevel(dimension.level());
-            if (level == null) continue;
-            // The first filter keeps only biomes with a key, so the later get() calls can't fail
-            //noinspection OptionalGetWithoutIsPresent
-            level.getChunkSource().getGenerator().getBiomeSource().possibleBiomes().stream()
-                    .filter(biome -> biome.unwrapKey().isPresent())
-                    .filter(biome -> namespace == null || biome.unwrapKey().get().identifier().getNamespace().equals(namespace))
-                    .filter(biome -> !missingOnly || !BiomePreviews.hasPicture(biome.unwrapKey().get().identifier()))
-                    .sorted(Comparator.comparing(biome -> biome.unwrapKey().get().identifier()))
-                    .filter(biome -> seen.add(biome.unwrapKey().get().identifier()))
-                    .forEach(biome -> targets.add(new Target(biome, dimension,
-                            dimension.equals(BiomeDimension.NETHER) || caves.contains(biome.unwrapKey().get().identifier()))));
-        }
+        List<Target> targets = collectTargets(server, namespace, missingOnly);
         if (targets.isEmpty()) {
             return Component.translatable(missingOnly ? "biomepicknchoose.command.preview.none_missing" : "biomepicknchoose.command.preview.none");
         }
@@ -204,6 +195,30 @@ public final class BiomePreviewCapture {
         minecraft.options.pauseOnLostFocus = false;
         active = capture;
         return null;
+    }
+
+    // The biomes to photograph, each dimension in turn. A biome placed in several dimensions is only taken in the first
+    private static List<Target> collectTargets(MinecraftServer server, @Nullable String namespace, boolean missingOnly) {
+        Set<Identifier> caves = CaveBiomes.fromServer(server);
+        Set<Identifier> taken = new HashSet<>();
+        List<Target> targets = new ArrayList<>();
+        for (BiomeDimension dimension : BiomeCatalog.serverDimensions(server)) {
+            ServerLevel level = server.getLevel(dimension.level());
+            if (level == null) continue;
+            Map<Identifier, Holder<Biome>> biomes = new TreeMap<>();
+            for (Holder<Biome> biome : level.getChunkSource().getGenerator().getBiomeSource().possibleBiomes()) {
+                biome.unwrapKey().ifPresent(key -> biomes.put(key.identifier(), biome));
+            }
+            biomes.forEach((id, biome) -> {
+                if (namespace != null && !id.getNamespace().equals(namespace)) return;
+                if (missingOnly && BiomePreviews.hasPicture(id)) return;
+                if (!taken.add(id)) return;
+                // Every Nether biome is underground, below the bedrock roof
+                boolean underground = dimension.equals(BiomeDimension.NETHER) || caves.contains(id);
+                targets.add(new Target(biome, dimension, underground));
+            });
+        }
+        return targets;
     }
 
     private CompletableFuture<BiomeScan> startScan(ServerLevel level, BiomeDimension dimension) {
@@ -253,79 +268,95 @@ public final class BiomePreviewCapture {
 
     private void tickStep() {
         switch (step) {
-            case PREPARE -> {
-                if (!prepare.isDone()) return;
-                saved = prepare.join();
-                next();
-            }
-            case LOCATE -> {
-                if (!locate.isDone()) return;
-                BiomeSpotFinder.Result result;
-                try {
-                    result = locate.join();
-                } catch (CompletionException e) {
-                    LOGGER.warn("Couldn't locate a spot for biome preview {}", currentId(), e.getCause());
-                    locateTime = Util.getMillis() - stepStart;
-                    skip("not_found");
-                    next();
-                    return;
-                }
-                locateTime = Util.getMillis() - stepStart;
-                if (result.spot() == null) {
-                    String reason = result.failure() == BiomeSpotFinder.Failure.UNDERGROUND ? "underground" : "not_found";
-                    skip(reason);
-                    next();
-                    return;
-                }
-                spot = result.spot();
-                caveRoom = null;
-                moveTo(spot);
-            }
-            case WAIT -> {
-                waited++;
-                WaitStatus status = waitStatus();
-                settled = status.ready() ? settled + 1 : 0;
-                boolean changed = waitStatus == null || waitStatus.kind() != status.kind();
-                waitStatus = status;
-                if (changed) {
-                    phaseStart = Util.getMillis();
-                    showStatus();
-                }
-                // A cave spot is only somewhere inside the biome, often in solid rock. Once its chunks exist on the
-                // server, look for a room in them to take the picture from
-                if (spot.cave() && caveRoom == null && (status.kind() == WaitKind.RENDER || status.ready())) {
-                    ResourceKey<Biome> key = current().biome().unwrapKey().orElseThrow();
-                    ServerLevel level = currentLevel();
-                    BiomeSpotFinder.Spot around = spot;
-                    caveRoom = server.submit(() -> findCaveRoom(level, around, key));
-                    setStep(Step.CAVE);
-                } else if (settled >= SETTLE_TICKS) {
-                    shoot();
-                } else if (waited >= TIMEOUT_TICKS) {
-                    LOGGER.warn("Biome preview for {} timed out, capturing anyway", currentId());
-                    timedOut.add(currentId());
-                    shoot();
-                }
-            }
-            case CAVE -> {
-                if (!caveRoom.isDone()) return;
-                BiomeSpotFinder.Spot room;
-                try {
-                    room = caveRoom.join();
-                } catch (CompletionException e) {
-                    LOGGER.warn("Couldn't find a cave room for biome preview {}", currentId(), e.getCause());
-                    room = null;
-                }
-                if (room == null) {
-                    skip("no_cave");
-                    next();
-                    return;
-                }
-                spot = room;
-                moveTo(spot);
-            }
+            case PREPARE -> tickPrepare();
+            case LOCATE -> tickLocate();
+            case WAIT -> tickWait();
+            case CAVE -> tickCave();
             case CAPTURE -> {}
         }
+    }
+
+    private void tickPrepare() {
+        if (!prepare.isDone()) return;
+        saved = prepare.join();
+        next();
+    }
+
+    // Once the spot search for the biome finished, teleport there, or skip the biome if there is no spot
+    private void tickLocate() {
+        if (!locate.isDone()) return;
+        locateTime = Util.getMillis() - stepStart;
+        BiomeSpotFinder.Result result;
+        try {
+            result = locate.join();
+        } catch (CompletionException e) {
+            LOGGER.warn("Couldn't locate a spot for biome preview {}", currentId(), e.getCause());
+            skipAndContinue("not_found");
+            return;
+        }
+        if (result.spot() == null) {
+            skipAndContinue(result.failure() == BiomeSpotFinder.Failure.UNDERGROUND ? "underground" : "not_found");
+            return;
+        }
+        spot = result.spot();
+        caveRoom = null;
+        moveTo(spot);
+    }
+
+    // Waits for the chunks around the camera to load and render, then takes the picture
+    private void tickWait() {
+        waited++;
+        WaitStatus status = waitStatus();
+        settled = status.ready() ? settled + 1 : 0;
+        boolean changed = waitStatus == null || waitStatus.kind() != status.kind();
+        waitStatus = status;
+        if (changed) {
+            phaseStart = Util.getMillis();
+            showStatus();
+        }
+        boolean chunksGenerated = status.kind() == WaitKind.RENDER || status.ready();
+        if (spot.cave() && caveRoom == null && chunksGenerated) {
+            findCaveRoomLater();
+        } else if (settled >= SETTLE_TICKS) {
+            shoot();
+        } else if (waited >= TIMEOUT_TICKS) {
+            LOGGER.warn("Biome preview for {} timed out, capturing anyway", currentId());
+            timedOut.add(currentId());
+            shoot();
+        }
+    }
+
+    // A cave spot is only somewhere inside the biome, often in solid rock. Now that its chunks exist on the server,
+    // look for a room in them to take the picture from
+    private void findCaveRoomLater() {
+        ResourceKey<Biome> key = current().biome().unwrapKey().orElseThrow();
+        ServerLevel level = currentLevel();
+        BiomeSpotFinder.Spot around = spot;
+        caveRoom = server.submit(() -> findCaveRoom(level, around, key));
+        setStep(Step.CAVE);
+    }
+
+    // Once the cave room search finished, move the camera into the room, or skip the biome if there is none
+    private void tickCave() {
+        if (!caveRoom.isDone()) return;
+        BiomeSpotFinder.Spot room;
+        try {
+            room = caveRoom.join();
+        } catch (CompletionException e) {
+            LOGGER.warn("Couldn't find a cave room for biome preview {}", currentId(), e.getCause());
+            room = null;
+        }
+        if (room == null) {
+            skipAndContinue("no_cave");
+            return;
+        }
+        spot = room;
+        moveTo(spot);
+    }
+
+    private void skipAndContinue(String reason) {
+        skip(reason);
+        next();
     }
 
     private void moveTo(BiomeSpotFinder.Spot target) {
@@ -608,29 +639,33 @@ public final class BiomePreviewCapture {
                     if (!level.isLoaded(pos) || !level.getBlockState(pos).isAir() || !level.getBiome(pos).is(key)) continue;
                     // Close above solid ground, not hanging over a lava or water sea
                     if (!hasGround(level, pos, CAMERA_GROUND_DEPTH)) continue;
-                    // The longest view, plus a little for the others, so a room beats the end of a long tunnel
-                    int total = 0;
-                    int longest = -1;
-                    float yaw = 0;
-                    for (int i = 0; i < 8; i++) {
-                        int view = caveView(level, pos, i * 45, key);
-                        total += view;
-                        if (view > longest) {
-                            longest = view;
-                            yaw = i * 45;
-                        }
-                    }
-                    int score = longest * 4 + total;
-                    if (score > bestScore) {
-                        bestScore = score;
+                    Viewpoint viewpoint = viewpoint(level, pos, key);
+                    if (viewpoint.score() > bestScore) {
+                        bestScore = viewpoint.score();
                         best = pos.immutable();
-                        bestYaw = yaw;
+                        bestYaw = viewpoint.yaw();
                     }
                 }
             }
         }
         if (best == null) return null;
         return new BiomeSpotFinder.Spot(best.getX() + 0.5, best.getY() + 0.5, best.getZ() + 0.5, bestYaw, CAVE_PITCH, true);
+    }
+
+    private static Viewpoint viewpoint(ServerLevel level, BlockPos pos, ResourceKey<Biome> key) {
+        int total = 0;
+        int longest = -1;
+        float longestYaw = 0;
+        for (int direction = 0; direction < VIEW_DIRECTIONS; direction++) {
+            float yaw = direction * 360f / VIEW_DIRECTIONS;
+            int view = caveView(level, pos, yaw, key);
+            total += view;
+            if (view > longest) {
+                longest = view;
+                longestYaw = yaw;
+            }
+        }
+        return new Viewpoint(longest * LONGEST_VIEW_WEIGHT + total, longestYaw);
     }
 
     // Blocks of open space in the biome before something solid, looking along the yaw. Only counts open space with

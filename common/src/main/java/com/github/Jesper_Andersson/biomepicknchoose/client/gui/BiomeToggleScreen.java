@@ -1,9 +1,9 @@
 package com.github.Jesper_Andersson.biomepicknchoose.client.gui;
 
 import com.github.Jesper_Andersson.biomepicknchoose.client.preview.BiomePreviews;
+import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeCatalog;
 import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeConfig;
 import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeDimension;
-import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeToggles;
 import com.github.Jesper_Andersson.biomepicknchoose.platform.Services;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -34,7 +34,6 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.util.FormattedCharSequence;
 import org.jetbrains.annotations.Nullable;
 
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -59,6 +58,9 @@ public final class BiomeToggleScreen extends Screen {
     private static final int DIMENSION_BUTTON_WIDTH = 110;
     private static final int ROW_WIDTH = 310;
     private static final int NARROW_ROW_WIDTH = 250;
+    // Space between widgets side by side, and room kept beside the list for its scroll bar
+    private static final int WIDGET_GAP = 5;
+    private static final int SCROLL_BAR_ROOM = 24;
     // Low enough for automatic GUI scale, which makes the screen 426 to 480 wide on common monitors
     private static final int PANEL_MIN_SCREEN_WIDTH = 400;
     // Rows narrower than this get a smaller thumbnail and toggle, to leave room for the name
@@ -89,11 +91,7 @@ public final class BiomeToggleScreen extends Screen {
 
     private final Screen parent;
     private final Set<String> disabled;
-    private final Map<BiomeDimension, Set<Identifier>> known;
-    // Per dimension, the biomes the world can place, left out for dimensions where that isn't known
-    private final Map<BiomeDimension, Set<Identifier>> generating;
-    private final Set<Identifier> caves;
-    private final Set<Identifier> water;
+    private final BiomeCatalog catalog;
     private final Consumer<List<String>> onSave;
     // Editing the config of the server this client is connected to
     private final boolean remote;
@@ -125,64 +123,36 @@ public final class BiomeToggleScreen extends Screen {
 
     /** Edits this game's config. */
     public BiomeToggleScreen(Screen parent) {
-        this(parent, Component.translatable("biomepicknchoose.configuration.title"), BiomeToggles.knownBiomes(),
-                BiomeToggles.generatingBiomes(), BiomeConfig.disabledBiomes(), BiomeToggles.knownCaveBiomes(), BiomeToggles.knownWaterBiomes(), null, false);
+        this(parent, Component.translatable("biomepicknchoose.configuration.title"), BiomeCatalog.local(),
+                BiomeConfig.disabledBiomes(), null, false);
     }
 
     /** Edits the server's config, from the biomes it sent. onSave sends the disabled biomes back. */
-    public static BiomeToggleScreen forServer(@Nullable Screen parent, Map<BiomeDimension, Set<Identifier>> known,
-                                              Map<BiomeDimension, Set<Identifier>> generating, List<String> disabled,
-                                              Set<Identifier> caves, Set<Identifier> water, Consumer<List<String>> onSave) {
-        return new BiomeToggleScreen(parent, Component.translatable("biomepicknchoose.configuration.title.server"), known,
-                generating, disabled, caves, water, onSave, true);
+    public static BiomeToggleScreen forServer(@Nullable Screen parent, BiomeCatalog catalog, List<String> disabled,
+                                              Consumer<List<String>> onSave) {
+        return new BiomeToggleScreen(parent, Component.translatable("biomepicknchoose.configuration.title.server"), catalog,
+                disabled, onSave, true);
     }
 
-    private BiomeToggleScreen(@Nullable Screen parent, Component title, Map<BiomeDimension, Set<Identifier>> known,
-                              Map<BiomeDimension, Set<Identifier>> generating, List<String> disabled, Set<Identifier> caves, Set<Identifier> water,
+    private BiomeToggleScreen(@Nullable Screen parent, Component title, BiomeCatalog catalog, List<String> disabled,
                               @Nullable Consumer<List<String>> onSave, boolean remote) {
         super(title);
         this.parent = parent;
-        this.known = known;
-        this.generating = generating;
-        this.caves = caves;
-        this.water = water;
+        this.catalog = catalog;
         this.disabled = new HashSet<>(disabled);
-        this.onSave = onSave != null ? onSave : biomes -> BiomeConfig.save(BiomeToggles.allKnown(known), biomes);
+        this.onSave = onSave != null ? onSave : biomes -> BiomeConfig.save(catalog.allKnown(), biomes);
         this.remote = remote;
     }
 
     @Override
     protected void init() {
-        // The server sends its own biomes, so they are always complete
-        hasKnownBiomes = remote || Files.isRegularFile(BiomeToggles.knownBiomesFile());
-
-        Map<String, List<Identifier>> byNamespace = new TreeMap<>(
-                Comparator.comparingInt(BiomeToggleScreen::namespaceOrder).thenComparing(Comparator.naturalOrder()));
-        for (Identifier id : known.getOrDefault(dimension, Set.of())) {
-            byNamespace.computeIfAbsent(id.getNamespace(), ns -> new ArrayList<>()).add(id);
-        }
-        tabs = byNamespace.entrySet().stream()
-                .map(entry -> new BiomeTab(tabTitle(entry.getKey()), entry.getValue()))
-                .toArray(Tab[]::new);
-
+        // Until a world was loaded in this game, the menu may miss biomes of other mods. The server's list is complete
+        hasKnownBiomes = remote || !catalog.generating().isEmpty();
+        tabs = createTabs();
         tabNavigationBar = TabNavigationBar.builder(tabManager, width).addTabs(tabs).build();
         addRenderableWidget(tabNavigationBar);
-        // Dimensions without any biome to list, like a mod dimension the scan found no biomes for, are left out
-        List<BiomeDimension> dimensions = known.entrySet().stream()
-                .filter(entry -> !entry.getValue().isEmpty())
-                .map(Map.Entry::getKey)
-                .toList();
-        if (!dimensions.contains(dimension)) dimension = BiomeDimension.OVERWORLD;
-        dimensionButton = addRenderableWidget(CycleButton.<BiomeDimension>builder(BiomeDimension::displayName, dimension)
-                .withValues(dimensions)
-                .displayOnlyValue()
-                .withTooltip(value -> Tooltip.create(Component.translatable("biomepicknchoose.configuration.dimension")))
-                .create(0, 0, DIMENSION_BUTTON_WIDTH, 20, Component.translatable("biomepicknchoose.configuration.dimension"),
-                        (button, value) -> switchDimension(value)));
-        searchBox = addRenderableWidget(new EditBox(font, 0, 0, 200, 20, Component.translatable("biomepicknchoose.configuration.search")));
-        searchBox.setHint(Component.translatable("biomepicknchoose.configuration.search").withStyle(ChatFormatting.DARK_GRAY));
-        searchBox.setValue(query);
-        searchBox.setResponder(this::search);
+        dimensionButton = addRenderableWidget(createDimensionButton());
+        searchBox = addRenderableWidget(createSearchBox());
         presetsButton = addRenderableWidget(Button.builder(Component.translatable("biomepicknchoose.configuration.presets"), button -> openPresets()).width(100).build());
         doneButton = addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, button -> save()).width(100).build());
         cancelButton = addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, button -> onClose()).width(100).build());
@@ -192,6 +162,42 @@ public final class BiomeToggleScreen extends Screen {
         tabNavigationBar.selectTab(tab, false);
         if (lastShownId != null && tabs.length > 0 && tabs[tab] instanceof BiomeTab biomeTab) biomeTab.list.show(lastShownId);
         repositionElements();
+    }
+
+    // One tab per mod, with the biomes it adds to the shown dimension
+    private Tab[] createTabs() {
+        Map<String, List<Identifier>> byNamespace = new TreeMap<>(
+                Comparator.comparingInt(BiomeToggleScreen::namespaceOrder).thenComparing(Comparator.naturalOrder()));
+        for (Identifier id : catalog.known().getOrDefault(dimension, Set.of())) {
+            byNamespace.computeIfAbsent(id.getNamespace(), namespace -> new ArrayList<>()).add(id);
+        }
+        return byNamespace.entrySet().stream()
+                .map(entry -> new BiomeTab(tabTitle(entry.getKey()), entry.getValue()))
+                .toArray(Tab[]::new);
+    }
+
+    private CycleButton<BiomeDimension> createDimensionButton() {
+        // Dimensions without any biome to list, like a mod dimension the scan found no biomes for, are left out
+        List<BiomeDimension> dimensions = catalog.known().entrySet().stream()
+                .filter(entry -> !entry.getValue().isEmpty())
+                .map(Map.Entry::getKey)
+                .toList();
+        if (!dimensions.contains(dimension)) dimension = BiomeDimension.OVERWORLD;
+        Component label = Component.translatable("biomepicknchoose.configuration.dimension");
+        return CycleButton.<BiomeDimension>builder(BiomeDimension::displayName, dimension)
+                .withValues(dimensions)
+                .displayOnlyValue()
+                .withTooltip(value -> Tooltip.create(label))
+                .create(0, 0, DIMENSION_BUTTON_WIDTH, 20, label, (button, value) -> switchDimension(value));
+    }
+
+    private EditBox createSearchBox() {
+        Component hint = Component.translatable("biomepicknchoose.configuration.search");
+        EditBox box = new EditBox(font, 0, 0, 200, 20, hint);
+        box.setHint(hint.copy().withStyle(ChatFormatting.DARK_GRAY));
+        box.setValue(query);
+        box.setResponder(this::search);
+        return box;
     }
 
     @Override
@@ -210,15 +216,20 @@ public final class BiomeToggleScreen extends Screen {
         }
         // Over the list, which takes the left half with the side panel
         int listWidth = preview != null ? width / 2 : width;
-        int rowWidth = Math.min(preview != null ? NARROW_ROW_WIDTH : ROW_WIDTH, listWidth - 24);
+        int rowWidth = rowWidth(listWidth);
         int rowLeft = (listWidth - rowWidth) / 2;
         dimensionButton.setPosition(rowLeft, top + 4);
-        searchBox.setWidth(rowWidth - DIMENSION_BUTTON_WIDTH - 5);
-        searchBox.setPosition(rowLeft + DIMENSION_BUTTON_WIDTH + 5, top + 4);
+        searchBox.setWidth(rowWidth - DIMENSION_BUTTON_WIDTH - WIDGET_GAP);
+        searchBox.setPosition(rowLeft + DIMENSION_BUTTON_WIDTH + WIDGET_GAP, top + 4);
         tabManager.setTabArea(new ScreenRectangle(0, top + SEARCH_ROW_HEIGHT, width, areaHeight - SEARCH_ROW_HEIGHT));
         presetsButton.setPosition(width / 2 - 155, height - 28);
         doneButton.setPosition(width / 2 - 50, height - 28);
         cancelButton.setPosition(width / 2 + 55, height - 28);
+    }
+
+    // The width of the list rows, and of the search row above them
+    private int rowWidth(int listWidth) {
+        return Math.min(preview != null ? NARROW_ROW_WIDTH : ROW_WIDTH, listWidth - SCROLL_BAR_ROOM);
     }
 
     // Vanilla gives every tab the same width within 400 pixels, which cuts long mod names off early. Instead, each tab
@@ -340,7 +351,7 @@ public final class BiomeToggleScreen extends Screen {
     }
 
     private void openPresets() {
-        minecraft.setScreen(new BiomePresetScreen(this, BiomeToggles.allKnown(known), disabled, this::reloadRows));
+        minecraft.setScreen(new BiomePresetScreen(this, catalog.allKnown(), disabled, this::reloadRows));
     }
 
     // The rows read their toggle state from disabled when created, so rebuild them after a preset changed it
@@ -420,15 +431,14 @@ public final class BiomeToggleScreen extends Screen {
             // With the side panel, the list and its buttons take the left half
             int listWidth = preview != null ? area.width() / 2 : area.width();
             int buttonWidth = Math.min(100, (listWidth - 40) / 3);
-            int left = area.left() + (listWidth - 3 * buttonWidth - 10) / 2;
+            int left = area.left() + (listWidth - 3 * buttonWidth - 2 * WIDGET_GAP) / 2;
             enableAll.setWidth(buttonWidth);
             disableAll.setWidth(buttonWidth);
             sortButton.setWidth(buttonWidth);
             enableAll.setPosition(left, area.top() + 4);
-            disableAll.setPosition(left + buttonWidth + 5, area.top() + 4);
-            sortButton.setPosition(left + 2 * (buttonWidth + 5), area.top() + 4);
-            // Leaves room for the scroll bar
-            list.rowWidth = Math.min(preview != null ? NARROW_ROW_WIDTH : ROW_WIDTH, listWidth - 24);
+            disableAll.setPosition(left + buttonWidth + WIDGET_GAP, area.top() + 4);
+            sortButton.setPosition(left + 2 * (buttonWidth + WIDGET_GAP), area.top() + 4);
+            list.rowWidth = rowWidth(listWidth);
             list.updateSizeAndPosition(listWidth, area.height() - TAB_HEADER_HEIGHT, area.top() + TAB_HEADER_HEIGHT);
             list.setX(area.left());
         }
@@ -530,17 +540,15 @@ public final class BiomeToggleScreen extends Screen {
         }
 
         private boolean isCave() {
-            return caves.contains(id);
+            return catalog.caves().contains(id);
         }
 
         private boolean isWater() {
-            return water.contains(id);
+            return catalog.water().contains(id);
         }
 
-        // Not placed by the world, when it is known what the world places in this dimension
         private boolean isUnused() {
-            Set<Identifier> placed = generating.get(dimension);
-            return placed != null && !placed.contains(id);
+            return catalog.isUnused(dimension, id);
         }
 
         Component displayName() {

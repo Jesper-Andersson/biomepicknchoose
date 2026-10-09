@@ -63,8 +63,10 @@ public final class SmokeTest {
     // Center of the chunks generated before the reload, which keep their biomes, so the second check avoids them
     @Nullable
     private static BlockPos firstCenter;
-    // Which /reload the test is waiting for: 0 for none, 1 for the forest one, 2 for the Nether and End one
-    private static int reloadPhase;
+    /** Which /reload the test is waiting for. */
+    private enum PendingReload { NONE, OVERWORLD, OTHER_DIMENSIONS }
+
+    private static PendingReload pendingReload = PendingReload.NONE;
     // The biome disabled at the start, set once the property was parsed
     private static Identifier firstBiome;
 
@@ -100,17 +102,17 @@ public final class SmokeTest {
 
         // Swap which biome is disabled, then apply it with /reload, see onReload
         BiomeConfig.save(Set.of(id), List.of(RELOAD_BIOME.toString()));
-        reloadPhase = 1;
+        pendingReload = PendingReload.OVERWORLD;
         LOGGER.info("Smoke test: enabled {} and disabled {} in the config, running /reload", id, RELOAD_BIOME);
         server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "reload");
     }
 
     /** Called from {@link BiomeToggles#onReload}. */
     static void onReload(MinecraftServer server) {
-        if (!enabled() || reloadPhase == 0) return;
-        int phase = reloadPhase;
-        reloadPhase = 0;
-        if (phase == 2) {
+        if (!enabled() || pendingReload == PendingReload.NONE) return;
+        PendingReload reload = pendingReload;
+        pendingReload = PendingReload.NONE;
+        if (reload == PendingReload.OTHER_DIMENSIONS) {
             if (run(server, () -> checkSource(server, Level.NETHER, NETHER_BIOME) && checkSource(server, Level.END, END_BIOME)
                     && checkSource(server, CUSTOM_DIMENSION, CUSTOM_BIOME))) {
                 finish(server, true);
@@ -126,7 +128,7 @@ public final class SmokeTest {
         if (!run(server, () -> check(server, RELOAD_BIOME, firstCenter))) return;
 
         BiomeConfig.save(Set.of(RELOAD_BIOME), List.of(NETHER_BIOME.toString(), END_BIOME.toString(), CUSTOM_BIOME.toString()));
-        reloadPhase = 2;
+        pendingReload = PendingReload.OTHER_DIMENSIONS;
         LOGGER.info("Smoke test: enabled {} and disabled {}, {} and {} in the config, running /reload", RELOAD_BIOME,
                 NETHER_BIOME, END_BIOME, CUSTOM_BIOME);
         server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "reload");

@@ -96,39 +96,36 @@ public final class ModBiomeScan {
             }
         }
 
-        Map<BiomeDimension, Set<String>> tagged = new HashMap<>();
-        for (BiomeDimension dimension : BiomeDimension.VANILLA) {
-            Set<String> ids = new HashSet<>();
-            for (String namespace : TAG_NAMESPACES) {
-                for (String tag : TAGS.get(dimension)) resolve(tags, namespace + ":" + tag, ids, new HashSet<>());
-            }
-            tagged.put(dimension, ids);
-        }
+        Map<BiomeDimension, Set<Identifier>> tagged = new HashMap<>();
+        for (BiomeDimension dimension : BiomeDimension.VANILLA) tagged.put(dimension, resolveTags(tags, TAGS.get(dimension)));
         tagged.get(BiomeDimension.OVERWORLD).removeAll(tagged.get(BiomeDimension.NETHER));
         tagged.get(BiomeDimension.OVERWORLD).removeAll(tagged.get(BiomeDimension.END));
 
         Map<BiomeDimension, Set<Identifier>> result = new TreeMap<>();
         for (Map.Entry<BiomeDimension, Set<Identifier>> entry : listed.entrySet()) {
             Set<Identifier> biomes = new HashSet<>(entry.getValue());
-            for (String id : tagged.getOrDefault(entry.getKey(), Set.of())) {
-                Identifier location = Identifier.tryParse(id);
-                if (location != null) biomes.add(location);
-            }
-            // Entries for mods that aren't installed, which tags can name as optional. Vanilla biomes always exist
-            biomes.removeIf(id -> !defined.contains(id) && !id.getNamespace().equals(Identifier.DEFAULT_NAMESPACE));
+            biomes.addAll(tagged.getOrDefault(entry.getKey(), Set.of()));
+            biomes.removeIf(id -> !exists(id, defined));
             result.put(entry.getKey(), Set.copyOf(biomes));
         }
 
-        Set<String> waterTagged = new HashSet<>();
-        for (String namespace : TAG_NAMESPACES) {
-            for (String tag : WATER_TAGS) resolve(tags, namespace + ":" + tag, waterTagged, new HashSet<>());
-        }
-        Set<Identifier> water = new HashSet<>();
-        for (String id : waterTagged) {
-            Identifier location = Identifier.tryParse(id);
-            if (location != null && defined.contains(location)) water.add(location);
-        }
+        Set<Identifier> water = resolveTags(tags, WATER_TAGS);
+        water.removeIf(id -> !exists(id, defined));
         return new Found(result, Set.copyOf(water));
+    }
+
+    // Tags can name biomes of mods that aren't installed, as optional entries. Vanilla biomes always exist
+    private static boolean exists(Identifier biome, Set<Identifier> defined) {
+        return defined.contains(biome) || biome.getNamespace().equals(Identifier.DEFAULT_NAMESPACE);
+    }
+
+    // The biomes in the named tags, in each of the namespaces mods put shared tags in
+    private static Set<Identifier> resolveTags(Map<String, List<String>> tags, List<String> tagNames) {
+        Set<String> ids = new HashSet<>();
+        for (String namespace : TAG_NAMESPACES) {
+            for (String tag : tagNames) resolve(tags, namespace + ":" + tag, ids, new HashSet<>());
+        }
+        return Identifiers.parseAll(ids);
     }
 
     private static void scanRoot(Path root, Set<Identifier> defined, Map<String, List<String>> tags,
@@ -139,24 +136,10 @@ public final class ModBiomeScan {
             for (Path namespaceDir : namespaces.toList()) {
                 String namespace = fileName(namespaceDir);
                 Path biomeDir = namespaceDir.resolve("worldgen/biome");
-                if (Files.isDirectory(biomeDir)) {
-                    try (Stream<Path> files = Files.walk(biomeDir)) {
-                        files.filter(file -> fileName(file).endsWith(".json")).forEach(file -> {
-                            String path = biomeDir.relativize(file).toString().replace('\\', '/');
-                            Identifier id = Identifier.tryBuild(namespace, path.substring(0, path.length() - ".json".length()));
-                            if (id != null) defined.add(id);
-                        });
-                    }
-                }
-                Path dimensionDir = namespaceDir.resolve("dimension");
-                if (Files.isDirectory(dimensionDir)) {
-                    try (Stream<Path> files = Files.walk(dimensionDir)) {
-                        for (Path file : files.filter(file -> fileName(file).endsWith(".json")).toList()) {
-                            String path = dimensionDir.relativize(file).toString().replace('\\', '/');
-                            Identifier id = Identifier.tryBuild(namespace, path.substring(0, path.length() - ".json".length()));
-                            if (id != null) collectDimension(read(file), listed.computeIfAbsent(new BiomeDimension(id), key -> new HashSet<>()));
-                        }
-                    }
+                jsonFiles(namespace, namespaceDir.resolve("worldgen/biome")).forEach((id, file) -> defined.add(id));
+                for (Map.Entry<Identifier, Path> dimension : jsonFiles(namespace, namespaceDir.resolve("dimension")).entrySet()) {
+                    Set<Identifier> biomes = listed.computeIfAbsent(new BiomeDimension(dimension.getKey()), key -> new HashSet<>());
+                    collectDimension(read(dimension.getValue()), biomes);
                 }
             }
         }
@@ -178,6 +161,20 @@ public final class ModBiomeScan {
             Path file = root.resolve(entry.getValue());
             if (Files.isRegularFile(file)) collectBiomes(read(file), listed.get(entry.getKey()));
         }
+    }
+
+    // The JSON files in a data folder, by the id they define: the namespace, and their path without ".json"
+    private static Map<Identifier, Path> jsonFiles(String namespace, Path dir) throws IOException {
+        Map<Identifier, Path> files = new HashMap<>();
+        if (!Files.isDirectory(dir)) return files;
+        try (Stream<Path> walk = Files.walk(dir)) {
+            for (Path file : walk.filter(file -> fileName(file).endsWith(".json")).toList()) {
+                String path = dir.relativize(file).toString().replace('\\', '/');
+                Identifier id = Identifier.tryBuild(namespace, path.substring(0, path.length() - ".json".length()));
+                if (id != null) files.put(id, file);
+            }
+        }
+        return files;
     }
 
     // The biomes a dimension file names, and the vanilla ones of a vanilla biome source preset it uses. Only looks at

@@ -1,16 +1,26 @@
 package com.github.Jesper_Andersson.biomepicknchoose.common;
 
 import com.mojang.logging.LogUtils;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.biome.BiomeSource;
 import org.slf4j.Logger;
 
 import java.lang.reflect.Field;
+import java.util.Set;
+import java.util.TreeSet;
 
 public final class BiomeSources {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final String INJECTOR_SOURCE = "dev.worldgen.lithostitched.impl.worldgen.biomeinjector.internal.InjectorBiomeSource";
 
     private BiomeSources() {}
+
+    /** The ids of the biomes the source can place, sorted. */
+    public static Set<Identifier> possibleBiomeIds(BiomeSource source) {
+        Set<Identifier> ids = new TreeSet<>();
+        source.possibleBiomes().forEach(biome -> biome.unwrapKey().ifPresent(key -> ids.add(key.identifier())));
+        return ids;
+    }
 
     /**
      * Unwraps Lithostitched's InjectorBiomeSource (added when any datapack has a biome injector) and Blueprint's

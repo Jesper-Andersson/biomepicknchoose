@@ -29,13 +29,14 @@ public abstract class MultiNoiseBiomeSourceMixin implements BiomeToggleSource {
         bpnc$active = true;
     }
 
-    // Replace disabled biomes with the nearest enabled biome by climate, in the overworld and the Nether. Wraps the
-    // whole method, so biomes picked by TerraBlender regions are replaced too. possibleBiomes() stays unchanged
+    // Replace disabled biomes with the nearest enabled biome by climate, in the overworld, the Nether and other
+    // multi-noise dimensions. Wraps the whole method, so biomes picked by TerraBlender regions are replaced too.
+    // possibleBiomes() stays unchanged
     @WrapMethod(method = "getNoiseBiome(IIILnet/minecraft/world/level/biome/Climate$Sampler;)Lnet/minecraft/core/Holder;")
-    private Holder<Biome> bpnc$replaceDisabled(int x, int y, int z, Climate.Sampler sampler, Operation<Holder<Biome>> original) {
-        Holder<Biome> biome = original.call(x, y, z, sampler);
+    private Holder<Biome> bpnc$replaceDisabled(int quartX, int quartY, int quartZ, Climate.Sampler sampler, Operation<Holder<Biome>> original) {
+        Holder<Biome> biome = original.call(quartX, quartY, quartZ, sampler);
         if (!bpnc$active || !BiomeToggles.isDisabled(biome)) return biome;
-        return bpnc$replace(biome, sampler.sample(x, y, z));
+        return bpnc$replace(biome, sampler.sample(quartX, quartY, quartZ));
     }
 
     @Override
