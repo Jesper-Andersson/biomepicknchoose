@@ -1,12 +1,15 @@
 package com.github.Jesper_Andersson.biomepicknchoose.client.preview;
 
 import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeToggles;
+import com.github.Jesper_Andersson.biomepicknchoose.common.CaveBiomes;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.logging.LogUtils;
 import net.minecraft.ChatFormatting;
+import net.minecraft.util.Mth;
 import net.minecraft.util.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
@@ -16,6 +19,8 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
@@ -51,13 +56,21 @@ public final class BiomePreviewCapture {
     private static final int TIMEOUT_TICKS = 15 * 20;
     private static final long NOON = 6000;
     private static final int CAPTURE_RENDER_DISTANCE = 8;
+    // Around a cave spot, where to look for a cave room: blocks to each side, above and below, and between the blocks tried
+    private static final int CAVE_SEARCH_RADIUS = 24;
+    private static final int CAVE_SEARCH_HEIGHT = 16;
+    private static final int CAVE_SEARCH_STEP = 2;
+    // How far a cave camera looks for open space in each direction
+    private static final int CAVE_VIEW_DISTANCE = 32;
+    private static final float CAVE_PITCH = 10;
 
     @Nullable
     private static BiomePreviewCapture active;
 
     private static final int STATUS_INTERVAL = 5;
 
-    private enum Step { PREPARE, LOCATE, WAIT, CAPTURE }
+    // CAVE finds a cave room around a cave spot once its chunks exist, then waits again there
+    private enum Step { PREPARE, LOCATE, WAIT, CAVE, CAPTURE }
 
     private enum WaitKind { MENU, TELEPORT, CHUNKS, RENDER, SETTLE }
 
@@ -70,12 +83,14 @@ public final class BiomePreviewCapture {
 
     private record Saved(ResourceKey<Level> dimension, double x, double y, double z, float yaw, float pitch,
                          GameType gameMode, boolean daylight, boolean weatherCycle, long dayTime,
-                         int clearTime, int rainTime, boolean raining, boolean thundering) {}
+                         int clearTime, int rainTime, boolean raining, boolean thundering,
+                         @Nullable MobEffectInstance nightVision) {}
 
     private final Minecraft minecraft;
     private final MinecraftServer server;
     private final UUID player;
     private final List<Holder<Biome>> biomes;
+    private final Set<Identifier> caves;
     private final boolean hideGui;
     private final boolean pauseOnLostFocus;
     private final int renderDistance;
@@ -103,6 +118,8 @@ public final class BiomePreviewCapture {
     private Saved saved;
     private CompletableFuture<BiomeSpotFinder.Result> locate;
     private BiomeSpotFinder.Spot spot;
+    @Nullable
+    private CompletableFuture<BiomeSpotFinder.Spot> caveRoom;
     private int waited;
     private int settled;
     private int frames;
@@ -122,6 +139,7 @@ public final class BiomePreviewCapture {
         this.server = server;
         this.player = minecraft.player.getUUID();
         this.biomes = biomes;
+        this.caves = CaveBiomes.fromServer(server);
         this.hideGui = minecraft.options.hideGui;
         this.pauseOnLostFocus = minecraft.options.pauseOnLostFocus;
         this.renderDistance = minecraft.options.renderDistance().get();
@@ -162,7 +180,7 @@ public final class BiomePreviewCapture {
                 formatDuration(Util.getMillis() - scanStart)));
         for (Holder<Biome> biome : biomes) {
             capture.searches.add(BiomeToggles.isDisabled(biome) ? null
-                    : capture.scan.thenApplyAsync(scan -> BiomeSpotFinder.find(overworld, biome, scan), capture.locator));
+                    : capture.scan.thenApplyAsync(scan -> BiomeSpotFinder.find(overworld, biome, capture.isCave(biome), scan), capture.locator));
         }
         // Fewer chunks to generate and render per spot; the integrated server follows the client's view distance
         if (capture.renderDistance > CAPTURE_RENDER_DISTANCE) minecraft.options.renderDistance().set(CAPTURE_RENDER_DISTANCE);
@@ -232,11 +250,8 @@ public final class BiomePreviewCapture {
                     return;
                 }
                 spot = result.spot();
-                server.execute(() -> teleportServer(spot));
-                waited = 0;
-                settled = 0;
-                waitStatus = null;
-                setStep(Step.WAIT);
+                caveRoom = null;
+                moveTo(spot);
             }
             case WAIT -> {
                 waited++;
@@ -248,7 +263,14 @@ public final class BiomePreviewCapture {
                     phaseStart = Util.getMillis();
                     showStatus();
                 }
-                if (settled >= SETTLE_TICKS) {
+                // A cave spot is only somewhere inside the biome, often in solid rock. Once its chunks exist on the
+                // server, look for a room in them to take the picture from
+                if (spot.cave() && caveRoom == null && (status.kind() == WaitKind.RENDER || status.ready())) {
+                    ResourceKey<Biome> key = biomes.get(index).unwrapKey().orElseThrow();
+                    BiomeSpotFinder.Spot around = spot;
+                    caveRoom = server.submit(() -> findCaveRoom(around, key));
+                    setStep(Step.CAVE);
+                } else if (settled >= SETTLE_TICKS) {
                     shoot();
                 } else if (waited >= TIMEOUT_TICKS) {
                     LOGGER.warn("Biome preview for {} timed out, capturing anyway", currentId());
@@ -256,8 +278,37 @@ public final class BiomePreviewCapture {
                     shoot();
                 }
             }
+            case CAVE -> {
+                if (!caveRoom.isDone()) return;
+                BiomeSpotFinder.Spot room;
+                try {
+                    room = caveRoom.join();
+                } catch (CompletionException e) {
+                    LOGGER.warn("Couldn't find a cave room for biome preview {}", currentId(), e.getCause());
+                    room = null;
+                }
+                if (room == null) {
+                    skip("no_cave");
+                    next();
+                    return;
+                }
+                spot = room;
+                moveTo(spot);
+            }
             case CAPTURE -> {}
         }
+    }
+
+    private void moveTo(BiomeSpotFinder.Spot target) {
+        server.execute(() -> teleportServer(target));
+        waited = 0;
+        settled = 0;
+        waitStatus = null;
+        setStep(Step.WAIT);
+    }
+
+    private boolean isCave(Holder<Biome> biome) {
+        return biome.unwrapKey().map(key -> caves.contains(key.identifier())).orElse(false);
     }
 
     private void next() {
@@ -333,6 +384,7 @@ public final class BiomePreviewCapture {
             case LOCATE -> scan.isDone() ? Component.translatable("biomepicknchoose.command.preview.step.locate")
                     : Component.translatable("biomepicknchoose.command.preview.step.scan", scanProgress.get());
             case CAPTURE -> Component.translatable("biomepicknchoose.command.preview.step.capture");
+            case CAVE -> Component.translatable("biomepicknchoose.command.preview.step.cave");
             case WAIT -> {
                 WaitStatus status = waitStatus;
                 if (status == null) yield Component.translatable("biomepicknchoose.command.preview.step.teleport");
@@ -457,12 +509,14 @@ public final class BiomePreviewCapture {
         ServerPlayer serverPlayer = server.getPlayerList().getPlayer(player);
         GameRules rules = overworld.getGameRules();
         ServerLevelData data = server.getWorldData().overworldData();
+        MobEffectInstance nightVision = serverPlayer.getEffect(MobEffects.NIGHT_VISION);
         // The level is only read, it belongs to the server
         //noinspection resource
         Saved state = new Saved(serverPlayer.level().dimension(), serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
                 serverPlayer.getYRot(), serverPlayer.getXRot(), serverPlayer.gameMode.getGameModeForPlayer(),
                 rules.get(GameRules.ADVANCE_TIME), rules.get(GameRules.ADVANCE_WEATHER), overworld.getDayTime(),
-                data.getClearWeatherTime(), data.getRainTime(), data.isRaining(), data.isThundering());
+                data.getClearWeatherTime(), data.getRainTime(), data.isRaining(), data.isThundering(),
+                nightVision == null ? null : new MobEffectInstance(nightVision));
         rules.set(GameRules.ADVANCE_TIME, false, server);
         rules.set(GameRules.ADVANCE_WEATHER, false, server);
         overworld.setWeatherParameters(0, 0, false, false);
@@ -476,6 +530,11 @@ public final class BiomePreviewCapture {
         ServerLevel overworld = server.overworld();
         serverPlayer.setGameMode(GameType.SPECTATOR);
         serverPlayer.teleportTo(overworld, target.x(), target.y(), target.z(), Set.of(), target.yaw(), target.pitch(), true);
+        // Caves are dark, even at noon. Hidden, so it doesn't show in the picture
+        serverPlayer.removeEffect(MobEffects.NIGHT_VISION);
+        if (target.cave()) {
+            serverPlayer.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, MobEffectInstance.INFINITE_DURATION, 0, false, false, false));
+        }
         overworld.setDayTime(NOON);
         overworld.setWeatherParameters(0, 0, false, false);
     }
@@ -492,5 +551,63 @@ public final class BiomePreviewCapture {
         if (serverPlayer == null || level == null) return;
         serverPlayer.teleportTo(level, state.x(), state.y(), state.z(), Set.of(), state.yaw(), state.pitch(), true);
         serverPlayer.setGameMode(state.gameMode());
+        serverPlayer.removeEffect(MobEffects.NIGHT_VISION);
+        if (state.nightVision() != null) serverPlayer.addEffect(new MobEffectInstance(state.nightVision()));
+    }
+
+    /**
+     * The open spot in the biome around a cave spot with the most open space to look into, facing the direction with the
+     * longest view that stays in the biome. Null if there is no open space in the biome there.
+     */
+    @Nullable
+    private BiomeSpotFinder.Spot findCaveRoom(BiomeSpotFinder.Spot around, ResourceKey<Biome> key) {
+        ServerLevel overworld = server.overworld();
+        BlockPos center = BlockPos.containing(around.x(), around.y(), around.z());
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        BlockPos best = null;
+        float bestYaw = 0;
+        int bestScore = 0;
+        for (int dy = -CAVE_SEARCH_HEIGHT; dy <= CAVE_SEARCH_HEIGHT; dy += CAVE_SEARCH_STEP) {
+            for (int dx = -CAVE_SEARCH_RADIUS; dx <= CAVE_SEARCH_RADIUS; dx += CAVE_SEARCH_STEP) {
+                for (int dz = -CAVE_SEARCH_RADIUS; dz <= CAVE_SEARCH_RADIUS; dz += CAVE_SEARCH_STEP) {
+                    pos.setWithOffset(center, dx, dy, dz);
+                    if (!overworld.isLoaded(pos) || !overworld.getBlockState(pos).isAir() || !overworld.getBiome(pos).is(key)) continue;
+                    // The longest view, plus a little for the others, so a room beats the end of a long tunnel
+                    int total = 0;
+                    int longest = -1;
+                    float yaw = 0;
+                    for (int i = 0; i < 8; i++) {
+                        int view = caveView(overworld, pos, i * 45, key);
+                        total += view;
+                        if (view > longest) {
+                            longest = view;
+                            yaw = i * 45;
+                        }
+                    }
+                    int score = longest * 4 + total;
+                    if (score > bestScore) {
+                        bestScore = score;
+                        best = pos.immutable();
+                        bestYaw = yaw;
+                    }
+                }
+            }
+        }
+        if (best == null) return null;
+        return new BiomeSpotFinder.Spot(best.getX() + 0.5, best.getY() + 0.5, best.getZ() + 0.5, bestYaw, CAVE_PITCH, true);
+    }
+
+    // Blocks of open space in the biome before something solid, looking along the yaw
+    private static int caveView(ServerLevel level, BlockPos from, float yaw, ResourceKey<Biome> key) {
+        double dx = -Mth.sin(yaw * Mth.DEG_TO_RAD);
+        double dz = Mth.cos(yaw * Mth.DEG_TO_RAD);
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        int view = 0;
+        for (int d = 1; d <= CAVE_VIEW_DISTANCE; d++) {
+            pos.set(from.getX() + Mth.floor(dx * d + 0.5), from.getY(), from.getZ() + Mth.floor(dz * d + 0.5));
+            if (!level.isLoaded(pos) || level.getBlockState(pos).blocksMotion()) break;
+            if (level.getBiome(pos).is(key)) view++;
+        }
+        return view;
     }
 }

@@ -28,8 +28,10 @@ final class BiomeScan {
     private static final int SCAN_RADIUS = 4096;
     private static final int SCAN_STEP = 32;
     private static final int SIZE = SCAN_RADIUS / SCAN_STEP * 2 + 1;
-    // Block heights above sea level to sample at
-    private static final int[] HEIGHTS = {0, 32, 64, 112};
+    // Block heights relative to sea level to sample at. The ones below it find cave biomes, down to the deep dark
+    private static final int[] HEIGHTS = {-112, -80, -48, -16, 0, 32, 64, 112};
+    // HEIGHTS before this index are underground
+    private static final int SURFACE_LAYER = 4;
     private static final int ROWS_PER_TASK = 8;
 
     record Candidate(BlockPos pos, int neighbours, double distance) {}
@@ -84,8 +86,11 @@ final class BiomeScan {
         }
     }
 
-    /** Every column where the biome was seen, most surrounded first, then nearest to spawn. */
-    List<Candidate> candidates(ResourceKey<Biome> key) {
+    /**
+     * Every column where the biome was seen, most surrounded first, then nearest to spawn. Cave biomes are looked for
+     * below sea level, other biomes at and above it.
+     */
+    List<Candidate> candidates(ResourceKey<Biome> key, boolean cave) {
         short target = -1;
         for (int i = 0; i < biomes.size(); i++) {
             if (biomes.get(i).is(key)) target = (short) i;
@@ -97,7 +102,7 @@ final class BiomeScan {
                 // A column can match at several heights; keep the height where it is most surrounded
                 int bestNeighbours = -1;
                 int bestHeight = 0;
-                for (int h = 0; h < HEIGHTS.length; h++) {
+                for (int h = cave ? 0 : SURFACE_LAYER; h < (cave ? SURFACE_LAYER : HEIGHTS.length); h++) {
                     short[] layer = grid[h];
                     if (layer[row * SIZE + col] != target) continue;
                     int neighbours = 0;

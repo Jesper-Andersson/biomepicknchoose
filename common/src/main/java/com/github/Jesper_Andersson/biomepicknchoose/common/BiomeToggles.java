@@ -6,6 +6,7 @@ import com.google.gson.Gson;
 import com.mojang.logging.LogUtils;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
@@ -93,20 +94,38 @@ public final class BiomeToggles {
         MultiNoiseBiomeSourceParameterList.Preset.OVERWORLD.usedBiomes().forEach(key -> ids.add(key.identifier()));
         ids.addAll(registered);
         ids.addAll(ModBiomeScan.overworldBiomes());
-        Path file = knownBiomesFile();
-        if (Files.isRegularFile(file)) {
-            try (Reader reader = Files.newBufferedReader(file)) {
-                for (JsonElement element : JsonParser.parseReader(reader).getAsJsonArray()) {
-                    Identifier location = Identifier.tryParse(element.getAsString());
-                    if (location != null) ids.add(location);
-                }
-            } catch (IOException | RuntimeException e) {
-                LOGGER.warn("Couldn't read {}", file, e);
-            }
-        }
+        ids.addAll(readKnownBiomes("biomes"));
         for (String id : BiomeConfig.disabledBiomes()) {
             Identifier location = Identifier.tryParse(id);
             if (location != null) ids.add(location);
+        }
+        return ids;
+    }
+
+    /** Vanilla cave biomes and the ones seen in the last loaded world, so the menu can mark them. */
+    public static Set<Identifier> knownCaveBiomes() {
+        Set<Identifier> ids = new TreeSet<>(CaveBiomes.vanilla());
+        ids.addAll(readKnownBiomes("caves"));
+        return ids;
+    }
+
+    // One list from the known biomes file: {"biomes": [...], "caves": [...]}. Older versions wrote only the biomes,
+    // as a plain array
+    private static Set<Identifier> readKnownBiomes(String list) {
+        Set<Identifier> ids = new TreeSet<>();
+        Path file = knownBiomesFile();
+        if (!Files.isRegularFile(file)) return ids;
+        try (Reader reader = Files.newBufferedReader(file)) {
+            JsonElement root = JsonParser.parseReader(reader);
+            JsonArray array = root.isJsonArray() ? (list.equals("biomes") ? root.getAsJsonArray() : null)
+                    : root.getAsJsonObject().getAsJsonArray(list);
+            if (array == null) return ids;
+            for (JsonElement element : array) {
+                Identifier location = Identifier.tryParse(element.getAsString());
+                if (location != null) ids.add(location);
+            }
+        } catch (IOException | RuntimeException e) {
+            LOGGER.warn("Couldn't read {}", file, e);
         }
         return ids;
     }
@@ -154,9 +173,14 @@ public final class BiomeToggles {
                 .map(key -> key.identifier().toString())
                 .sorted()
                 .forEach(ids::add);
+        JsonArray caves = new JsonArray();
+        CaveBiomes.fromServer(server).forEach(id -> caves.add(id.toString()));
+        JsonObject root = new JsonObject();
+        root.add("biomes", ids);
+        root.add("caves", caves);
         Path file = knownBiomesFile();
         try (Writer writer = Files.newBufferedWriter(file)) {
-            GSON.toJson(ids, writer);
+            GSON.toJson(root, writer);
         } catch (IOException e) {
             LOGGER.warn("Couldn't write {}", file, e);
         }

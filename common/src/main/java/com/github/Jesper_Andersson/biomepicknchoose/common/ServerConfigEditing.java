@@ -13,6 +13,7 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.PermissionCheck;
 import org.slf4j.Logger;
@@ -31,11 +32,12 @@ public final class ServerConfigEditing {
 
     private ServerConfigEditing() {}
 
-    /** Server to client: the biomes the server knows, and the ones its config disables. */
-    public record OpenPayload(List<String> known, List<String> disabled) implements CustomPacketPayload {
-        public static final Type<OpenPayload> TYPE = new Type<>(Identifier.fromNamespaceAndPath(Constants.MOD_ID, "open_server_config"));
+    /** Server to client: the biomes the server knows, the ones its config disables, and its cave biomes. */
+    public record OpenPayload(List<String> known, List<String> disabled, List<String> caves) implements CustomPacketPayload {
+        // v2 added caves. A new id, so clients with an older version are told to update instead of failing to decode it
+        public static final Type<OpenPayload> TYPE = new Type<>(Identifier.fromNamespaceAndPath(Constants.MOD_ID, "open_server_config_v2"));
         public static final StreamCodec<ByteBuf, OpenPayload> CODEC = StreamCodec.composite(
-                IDS, OpenPayload::known, IDS, OpenPayload::disabled, OpenPayload::new);
+                IDS, OpenPayload::known, IDS, OpenPayload::disabled, IDS, OpenPayload::caves, OpenPayload::new);
 
         @Override
         public Type<OpenPayload> type() {
@@ -65,8 +67,10 @@ public final class ServerConfigEditing {
                                 "Install Biome Pick'n'Choose on your client to edit the server's biomes"));
                         return 0;
                     }
-                    List<String> known = BiomeToggles.serverKnownBiomes(player.level().getServer()).stream().map(Identifier::toString).toList();
-                    player.connection.send(new ClientboundCustomPayloadPacket(new OpenPayload(known, BiomeConfig.disabledBiomes())));
+                    MinecraftServer server = player.level().getServer();
+                    List<String> known = BiomeToggles.serverKnownBiomes(server).stream().map(Identifier::toString).toList();
+                    List<String> caves = CaveBiomes.fromServer(server).stream().map(Identifier::toString).toList();
+                    player.connection.send(new ClientboundCustomPayloadPacket(new OpenPayload(known, BiomeConfig.disabledBiomes(), caves)));
                     return 1;
                 })));
     }

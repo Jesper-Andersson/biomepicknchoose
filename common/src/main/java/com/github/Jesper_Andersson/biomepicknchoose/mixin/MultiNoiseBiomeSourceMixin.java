@@ -45,6 +45,11 @@ public abstract class MultiNoiseBiomeSourceMixin implements BiomeToggleSource {
         return filtered == null ? biome : filtered.findValue(point);
     }
 
+    @Override
+    public Climate.ParameterList<Holder<Biome>> bpnc$parameters() {
+        return parameters();
+    }
+
     @Unique
     private Climate.ParameterList<Holder<Biome>> bpnc$filtered() {
         int version = BiomeToggles.version();

@@ -16,4 +16,7 @@ public interface BiomeToggleSource {
      * otherwise the biome itself. Also used for biomes placed by wrapping sources, like Lithostitched injectors.
      */
     Holder<Biome> bpnc$replace(Holder<Biome> biome, Climate.TargetPoint point);
+
+    /** The source's biome parameters, with disabled biomes. */
+    Climate.ParameterList<Holder<Biome>> bpnc$parameters();
 }

@@ -66,6 +66,8 @@ public final class BiomeToggleScreen extends Screen {
     // Text colours need an alpha channel, or the text is invisible
     private static final int HINT_COLOR = 0xFFA0A0A0;
     private static final int TEXT_COLOR = 0xFFFFFFFF;
+    // Cave biome names, so they stand out from surface biomes
+    private static final int CAVE_TEXT_COLOR = 0xFFAAAAAA;
     // Thumbnails in the rows, half the size of the pictures BiomePreviews makes, so they are sharp at GUI scale 2
     private static final int THUMBNAIL_WIDTH = BiomePreviews.THUMBNAIL_WIDTH / 2;
     private static final int THUMBNAIL_HEIGHT = BiomePreviews.THUMBNAIL_HEIGHT / 2;
@@ -77,6 +79,7 @@ public final class BiomeToggleScreen extends Screen {
     private final Screen parent;
     private final Set<String> disabled;
     private final Set<Identifier> known;
+    private final Set<Identifier> caves;
     private final Consumer<List<String>> onSave;
     // Editing the config of the server this client is connected to
     private final boolean remote;
@@ -104,19 +107,21 @@ public final class BiomeToggleScreen extends Screen {
     /** Edits this game's config. */
     public BiomeToggleScreen(Screen parent) {
         this(parent, Component.translatable("biomepicknchoose.configuration.title"), BiomeToggles.knownBiomes(),
-                BiomeConfig.disabledBiomes(), null, false);
+                BiomeConfig.disabledBiomes(), BiomeToggles.knownCaveBiomes(), null, false);
     }
 
     /** Edits the server's config, from the biomes it sent. onSave sends the disabled biomes back. */
-    public static BiomeToggleScreen forServer(@Nullable Screen parent, Set<Identifier> known, List<String> disabled, Consumer<List<String>> onSave) {
-        return new BiomeToggleScreen(parent, Component.translatable("biomepicknchoose.configuration.title.server"), known, disabled, onSave, true);
+    public static BiomeToggleScreen forServer(@Nullable Screen parent, Set<Identifier> known, List<String> disabled,
+                                              Set<Identifier> caves, Consumer<List<String>> onSave) {
+        return new BiomeToggleScreen(parent, Component.translatable("biomepicknchoose.configuration.title.server"), known, disabled, caves, onSave, true);
     }
 
     private BiomeToggleScreen(@Nullable Screen parent, Component title, Set<Identifier> known, List<String> disabled,
-                              @Nullable Consumer<List<String>> onSave, boolean remote) {
+                              Set<Identifier> caves, @Nullable Consumer<List<String>> onSave, boolean remote) {
         super(title);
         this.parent = parent;
         this.known = known;
+        this.caves = caves;
         this.disabled = new HashSet<>(disabled);
         this.onSave = onSave != null ? onSave : biomes -> BiomeConfig.save(known, biomes);
         this.remote = remote;
@@ -246,7 +251,7 @@ public final class BiomeToggleScreen extends Screen {
                 lineY += font.lineHeight;
             }
         }
-        guiGraphics.drawString(font, Language.getInstance().getVisualOrder(font.substrByWidth(row.name, w)), x, y + h + 5, TEXT_COLOR);
+        guiGraphics.drawString(font, Language.getInstance().getVisualOrder(font.substrByWidth(row.name, w)), x, y + h + 5, row.textColor());
         guiGraphics.drawString(font, row.id.toString(), x, y + h + 16, HINT_COLOR);
     }
 
@@ -426,8 +431,22 @@ public final class BiomeToggleScreen extends Screen {
             this.name = Component.translatableWithFallback("biome." + id.getNamespace() + "." + id.getPath(), id.toString());
             this.toggle = CycleButton.booleanBuilder(ON, OFF, !disabled.contains(id.toString()))
                     .displayOnlyValue()
-                    .withTooltip(enabled -> Tooltip.create(Component.literal(id.toString())))
+                    .withTooltip(enabled -> Tooltip.create(tooltip()))
                     .create(0, 0, 60, 20, name, (button, enabled) -> updateDisabled(enabled));
+        }
+
+        private Component tooltip() {
+            Component text = Component.literal(id.toString());
+            if (!isCave()) return text;
+            return text.copy().append("\n").append(Component.translatable("biomepicknchoose.configuration.cave").withStyle(ChatFormatting.GRAY));
+        }
+
+        private boolean isCave() {
+            return caves.contains(id);
+        }
+
+        int textColor() {
+            return isCave() ? CAVE_TEXT_COLOR : TEXT_COLOR;
         }
 
         void setEnabled(boolean enabled) {
@@ -468,7 +487,7 @@ public final class BiomeToggleScreen extends Screen {
             int nameLeft = left + thumbnailWidth + 6;
             int maxNameWidth = width - thumbnailWidth - 6 - toggle.getWidth() - 6;
             guiGraphics.drawString(font, Language.getInstance().getVisualOrder(font.substrByWidth(name, maxNameWidth)),
-                    nameLeft, top + (height - font.lineHeight) / 2, TEXT_COLOR);
+                    nameLeft, top + (height - font.lineHeight) / 2, textColor());
             toggle.setPosition(left + width - toggle.getWidth(), top + (height - toggle.getHeight()) / 2);
             toggle.render(guiGraphics, mouseX, mouseY, partialTick);
         }

@@ -15,6 +15,7 @@ Requires Minecraft 1.21.11 and either NeoForge 21.11+ or Fabric with Fabric API.
 - **In-game config menu.** Open it from Mods → Biome Pick'n'Choose → Config. On Fabric, this needs [Mod Menu](https://modrinth.com/mod/modmenu).
   - One tab per mod, with Minecraft first.
   - A green On / red Off toggle per biome. Hovering a toggle shows the biome id.
+  - Cave biomes (like lush caves and the deep dark) have gray names, so they stand out from surface biomes.
   - Enable all / Disable all buttons for each tab.
   - A sort button: A-Z, On first, or Off first.
   - A side panel that previews the hovered biome (on wide screens).
@@ -27,7 +28,7 @@ Requires Minecraft 1.21.11 and either NeoForge 21.11+ or Fabric with Fabric API.
   - Presets keep entries for mods that aren't installed. When loading, only biomes that are known now are applied.
   - Presets use the same format as the config, so a preset file can be copied over `config/biomepicknchoose.json`, on either loader, client or server.
 - **Biome preview pictures.** These are client commands for singleplayer only:
-  - `/biomepick_preview capture [namespace]` photographs each biome. It finds a spot, teleports there in spectator mode, waits for chunks to load, and takes a screenshot without the HUD. Progress and time left show while it runs.
+  - `/biomepick_preview capture [namespace]` photographs each biome. It finds a spot, teleports there in spectator mode, waits for chunks to load, and takes a screenshot without the HUD. Progress and time left show while it runs. Cave biomes are photographed from inside a cave room, with night vision.
   - `/biomepick_preview capture_missing [namespace]` only captures biomes that don't have a picture yet.
   - `/biomepick_preview cancel` stops a capture.
   - Pictures are saved to `config/biomepicknchoose/biome_previews/<namespace>/<biome>.png`. Each one can be removed from the menu ("Remove picture").
@@ -62,7 +63,7 @@ Other files under `config/`:
 
 | Path                                 | Contents                                                                                |
 |--------------------------------------|-----------------------------------------------------------------------------------------|
-| `biomepicknchoose-known-biomes.json` | Cache of every overworld biome seen, so the menu can list modded biomes outside a world |
+| `biomepicknchoose-known-biomes.json` | Cache of every overworld biome seen, and which are cave biomes, so the menu can list modded biomes outside a world |
 | `biomepicknchoose/presets/`          | Saved presets (JSON)                                                                    |
 | `biomepicknchoose/biome_previews/`   | Captured preview pictures                                                               |
 
