@@ -10,7 +10,7 @@ import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Collection;
@@ -31,7 +31,7 @@ public class BiomePresetScreen extends Screen {
     private static final int RESCAN_INTERVAL = 20;
 
     private final Screen parent;
-    private final Set<ResourceLocation> known;
+    private final Set<Identifier> known;
     private final Set<String> disabled;
     private final Runnable onLoad;
     private PresetList list;
@@ -48,7 +48,7 @@ public class BiomePresetScreen extends Screen {
     private String selected;
 
     /** onLoad runs after a preset changed disabled, before returning to parent. */
-    public BiomePresetScreen(Screen parent, Set<ResourceLocation> known, Set<String> disabled, Runnable onLoad) {
+    public BiomePresetScreen(Screen parent, Set<Identifier> known, Set<String> disabled, Runnable onLoad) {
         super(Component.translatable("biomepicknchoose.configuration.presets.title"));
         this.parent = parent;
         this.known = known;
@@ -97,7 +97,7 @@ public class BiomePresetScreen extends Screen {
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
-        guiGraphics.drawCenteredString(font, title, width / 2, 15, 0xFFFFFF);
+        guiGraphics.drawCenteredString(font, title, width / 2, 15, 0xFFFFFFFF);
     }
 
     @Override
@@ -136,8 +136,8 @@ public class BiomePresetScreen extends Screen {
     }
 
     private void write(String file) {
-        Map<ResourceLocation, Boolean> values = new HashMap<>();
-        for (ResourceLocation id : known) values.put(id, !disabled.contains(id.toString()));
+        Map<Identifier, Boolean> values = new HashMap<>();
+        for (Identifier id : known) values.put(id, !disabled.contains(id.toString()));
         BiomePresets.save(file, values);
         selected = file;
         refreshList();
@@ -145,15 +145,15 @@ public class BiomePresetScreen extends Screen {
 
     private void load() {
         if (selected == null) return;
-        Map<ResourceLocation, Boolean> values = BiomePresets.load(selected);
+        Map<Identifier, Boolean> values = BiomePresets.load(selected);
         int applied = 0;
-        for (Map.Entry<ResourceLocation, Boolean> entry : values.entrySet()) {
+        for (Map.Entry<Identifier, Boolean> entry : values.entrySet()) {
             if (!known.contains(entry.getKey())) continue;
             if (entry.getValue()) disabled.remove(entry.getKey().toString());
             else disabled.add(entry.getKey().toString());
             applied++;
         }
-        SystemToast.addOrUpdate(minecraft.getToasts(), TOAST,
+        SystemToast.addOrUpdate(minecraft.getToastManager(), TOAST,
                 Component.translatable("biomepicknchoose.configuration.presets.loaded", selected, applied, values.size()), null);
         onLoad.run();
         onClose();
@@ -206,9 +206,8 @@ public class BiomePresetScreen extends Screen {
         }
 
         @Override
-        public void render(GuiGraphics guiGraphics, int index, int top, int left, int width, int height,
-                           int mouseX, int mouseY, boolean hovering, float partialTick) {
-            guiGraphics.drawCenteredString(font, name, left + width / 2, top + (height - font.lineHeight) / 2, 0xFFFFFF);
+        public void renderContent(GuiGraphics guiGraphics, int mouseX, int mouseY, boolean hovering, float partialTick) {
+            guiGraphics.drawCenteredString(font, name, getContentXMiddle(), getContentYMiddle() - font.lineHeight / 2, 0xFFFFFFFF);
         }
     }
 }

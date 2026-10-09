@@ -4,7 +4,7 @@ import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeToggles;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.logging.LogUtils;
 import net.minecraft.ChatFormatting;
-import net.minecraft.Util;
+import net.minecraft.util.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.core.Holder;
@@ -12,11 +12,11 @@ import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ComponentUtils;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.level.GameRules;
+import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -89,9 +90,9 @@ public final class BiomePreviewCapture {
     private CompletableFuture<BiomeScan> scan;
     // Indexed like biomes, null for disabled biomes
     private final List<CompletableFuture<BiomeSpotFinder.Result>> searches = new ArrayList<>();
-    private final List<ResourceLocation> captured = new ArrayList<>();
+    private final List<Identifier> captured = new ArrayList<>();
     private final List<Component> skipped = new ArrayList<>();
-    private final List<ResourceLocation> timedOut = new ArrayList<>();
+    private final List<Identifier> timedOut = new ArrayList<>();
     // How long each captured biome took, for the time left estimate
     private final List<Long> durations = new ArrayList<>();
 
@@ -138,9 +139,9 @@ public final class BiomePreviewCapture {
         //noinspection OptionalGetWithoutIsPresent
         List<Holder<Biome>> biomes = server.overworld().getChunkSource().getGenerator().getBiomeSource().possibleBiomes().stream()
                 .filter(biome -> biome.unwrapKey().isPresent())
-                .filter(biome -> namespace == null || biome.unwrapKey().get().location().getNamespace().equals(namespace))
-                .filter(biome -> !missingOnly || !BiomePreviews.hasPicture(biome.unwrapKey().get().location()))
-                .sorted(Comparator.comparing(biome -> biome.unwrapKey().get().location()))
+                .filter(biome -> namespace == null || biome.unwrapKey().get().identifier().getNamespace().equals(namespace))
+                .filter(biome -> !missingOnly || !BiomePreviews.hasPicture(biome.unwrapKey().get().identifier()))
+                .sorted(Comparator.comparing(biome -> biome.unwrapKey().get().identifier()))
                 .toList();
         if (biomes.isEmpty()) {
             return Component.translatable(missingOnly ? "biomepicknchoose.command.preview.none_missing" : "biomepicknchoose.command.preview.none");
@@ -368,29 +369,31 @@ public final class BiomePreviewCapture {
     // The first frame after hiding the HUD may have started before the tick that hid it
     private void frame() {
         if (++frames < 2) return;
-        ResourceLocation id = currentId();
-        NativeImage screen = Screenshot.takeScreenshot(minecraft.getMainRenderTarget());
-        minecraft.options.hideGui = false;
-        NativeImage preview = new NativeImage(WIDTH, HEIGHT, false);
-        int w = screen.getWidth();
-        int h = screen.getHeight();
-        int cropW = Math.min(w, h * 16 / 9);
-        int cropH = Math.min(h, w * 9 / 16);
-        screen.resizeSubRectTo((w - cropW) / 2, (h - cropH) / 2, cropW, cropH, preview);
-        screen.close();
+        Identifier id = currentId();
         Path file = BiomePreviews.captureFile(id);
-        // The shared IO pool, which must not be closed
-        //noinspection resource
-        Util.ioPool().execute(() -> {
-            try {
-                Files.createDirectories(file.getParent());
-                preview.writeToFile(file);
-            } catch (IOException e) {
-                LOGGER.warn("Couldn't write biome preview {}", file, e);
-            } finally {
-                preview.close();
-            }
+        // The frame is copied now, but read back from the GPU later, so the picture is made in the callback
+        Screenshot.takeScreenshot(minecraft.getMainRenderTarget(), screen -> {
+            NativeImage preview = new NativeImage(WIDTH, HEIGHT, false);
+            int w = screen.getWidth();
+            int h = screen.getHeight();
+            int cropW = Math.min(w, h * 16 / 9);
+            int cropH = Math.min(h, w * 9 / 16);
+            screen.resizeSubRectTo((w - cropW) / 2, (h - cropH) / 2, cropW, cropH, preview);
+            screen.close();
+            // The shared IO pool, which must not be closed
+            //noinspection resource
+            Util.ioPool().execute(() -> {
+                try {
+                    Files.createDirectories(file.getParent());
+                    preview.writeToFile(file);
+                } catch (IOException e) {
+                    LOGGER.warn("Couldn't write biome preview {}", file, e);
+                } finally {
+                    preview.close();
+                }
+            });
         });
+        minecraft.options.hideGui = false;
         captured.add(id);
         durations.add(Util.getMillis() - biomeStart);
         LOGGER.info("Biome preview {}: locate {}, wait {}", id, formatDuration(locateTime), formatDuration(waitTime));
@@ -402,7 +405,7 @@ public final class BiomePreviewCapture {
         Path dir = BiomePreviews.captureDir();
         Component folder = Component.literal(dir.toString()).withStyle(style -> style
                 .withUnderlined(true)
-                .withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_FILE, dir.toAbsolutePath().toString())));
+                .withClickEvent(new ClickEvent.OpenFile(dir.toAbsolutePath().toString())));
         message(Component.translatable("biomepicknchoose.command.preview.done", captured.size(), biomes.size(), folder,
                 formatDuration(Util.getMillis() - runStart)));
         if (!skipped.isEmpty()) {
@@ -435,8 +438,8 @@ public final class BiomePreviewCapture {
         minecraft.options.renderDistance().set(renderDistance);
     }
 
-    private ResourceLocation currentId() {
-        return biomes.get(index).unwrapKey().orElseThrow().location();
+    private Identifier currentId() {
+        return biomes.get(index).unwrapKey().orElseThrow().identifier();
     }
 
     private void message(Component component) {
@@ -458,10 +461,10 @@ public final class BiomePreviewCapture {
         //noinspection resource
         Saved state = new Saved(serverPlayer.level().dimension(), serverPlayer.getX(), serverPlayer.getY(), serverPlayer.getZ(),
                 serverPlayer.getYRot(), serverPlayer.getXRot(), serverPlayer.gameMode.getGameModeForPlayer(),
-                rules.getBoolean(GameRules.RULE_DAYLIGHT), rules.getBoolean(GameRules.RULE_WEATHER_CYCLE), overworld.getDayTime(),
+                rules.get(GameRules.ADVANCE_TIME), rules.get(GameRules.ADVANCE_WEATHER), overworld.getDayTime(),
                 data.getClearWeatherTime(), data.getRainTime(), data.isRaining(), data.isThundering());
-        rules.getRule(GameRules.RULE_DAYLIGHT).set(false, server);
-        rules.getRule(GameRules.RULE_WEATHER_CYCLE).set(false, server);
+        rules.set(GameRules.ADVANCE_TIME, false, server);
+        rules.set(GameRules.ADVANCE_WEATHER, false, server);
         overworld.setWeatherParameters(0, 0, false, false);
         overworld.setDayTime(NOON);
         return state;
@@ -472,7 +475,7 @@ public final class BiomePreviewCapture {
         if (serverPlayer == null) return;
         ServerLevel overworld = server.overworld();
         serverPlayer.setGameMode(GameType.SPECTATOR);
-        serverPlayer.teleportTo(overworld, target.x(), target.y(), target.z(), target.yaw(), target.pitch());
+        serverPlayer.teleportTo(overworld, target.x(), target.y(), target.z(), Set.of(), target.yaw(), target.pitch(), true);
         overworld.setDayTime(NOON);
         overworld.setWeatherParameters(0, 0, false, false);
     }
@@ -480,14 +483,14 @@ public final class BiomePreviewCapture {
     private void restoreServer(Saved state) {
         ServerLevel overworld = server.overworld();
         GameRules rules = overworld.getGameRules();
-        rules.getRule(GameRules.RULE_DAYLIGHT).set(state.daylight(), server);
-        rules.getRule(GameRules.RULE_WEATHER_CYCLE).set(state.weatherCycle(), server);
+        rules.set(GameRules.ADVANCE_TIME, state.daylight(), server);
+        rules.set(GameRules.ADVANCE_WEATHER, state.weatherCycle(), server);
         overworld.setDayTime(state.dayTime());
         overworld.setWeatherParameters(state.clearTime(), state.rainTime(), state.raining(), state.thundering());
         ServerPlayer serverPlayer = server.getPlayerList().getPlayer(player);
         ServerLevel level = server.getLevel(state.dimension());
         if (serverPlayer == null || level == null) return;
-        serverPlayer.teleportTo(level, state.x(), state.y(), state.z(), state.yaw(), state.pitch());
+        serverPlayer.teleportTo(level, state.x(), state.y(), state.z(), Set.of(), state.yaw(), state.pitch(), true);
         serverPlayer.setGameMode(state.gameMode());
     }
 }

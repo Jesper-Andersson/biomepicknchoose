@@ -53,7 +53,10 @@ public abstract class ChunkMapMixin {
             Class<?> type = biomeSource.getClass();
             try {
                 if (type.getName().equals(bpnc$INJECTOR_SOURCE)) {
-                    biomeSource = (BiomeSource) type.getMethod("rootDelegate").invoke(biomeSource);
+                    // A private field in the versions for 1.21.11
+                    Field field = type.getDeclaredField("rootDelegate");
+                    field.setAccessible(true);
+                    biomeSource = (BiomeSource) field.get(biomeSource);
                 } else if (type.getSimpleName().equals("ModdedBiomeSource")) {
                     Field field = type.getDeclaredField("originalSource");
                     field.setAccessible(true);

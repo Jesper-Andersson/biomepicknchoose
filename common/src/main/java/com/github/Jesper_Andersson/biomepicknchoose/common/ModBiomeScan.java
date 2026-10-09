@@ -6,7 +6,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.logging.LogUtils;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
 
 import java.io.IOException;
@@ -39,12 +39,12 @@ public final class ModBiomeScan {
             "data/minecraft/worldgen/multi_noise_biome_source_parameter_list/overworld.json");
 
     // The mods can't change while the game runs, so this is only done once
-    private static volatile Set<ResourceLocation> found;
+    private static volatile Set<Identifier> found;
 
     private ModBiomeScan() {}
 
-    public static Set<ResourceLocation> overworldBiomes() {
-        Set<ResourceLocation> biomes = found;
+    public static Set<Identifier> overworldBiomes() {
+        Set<Identifier> biomes = found;
         if (biomes == null) {
             long start = System.nanoTime();
             biomes = Set.copyOf(scan());
@@ -54,11 +54,11 @@ public final class ModBiomeScan {
         return biomes;
     }
 
-    private static Set<ResourceLocation> scan() {
-        Set<ResourceLocation> defined = new HashSet<>();
+    private static Set<Identifier> scan() {
+        Set<Identifier> defined = new HashSet<>();
         // Tag id to its entries, from every mod: biome ids, and other tags as "#namespace:path"
         Map<String, List<String>> tags = new HashMap<>();
-        Set<ResourceLocation> listed = new HashSet<>();
+        Set<Identifier> listed = new HashSet<>();
         for (Path root : Services.PLATFORM.getModRoots()) {
             try {
                 scanRoot(root, defined, tags, listed);
@@ -75,9 +75,9 @@ public final class ModBiomeScan {
         }
         overworld.removeAll(other);
 
-        Set<ResourceLocation> biomes = new HashSet<>();
+        Set<Identifier> biomes = new HashSet<>();
         for (String id : overworld) {
-            ResourceLocation location = ResourceLocation.tryParse(id);
+            Identifier location = Identifier.tryParse(id);
             if (location != null) biomes.add(location);
         }
         biomes.addAll(listed);
@@ -86,7 +86,7 @@ public final class ModBiomeScan {
         return biomes;
     }
 
-    private static void scanRoot(Path root, Set<ResourceLocation> defined, Map<String, List<String>> tags, Set<ResourceLocation> listed) throws IOException {
+    private static void scanRoot(Path root, Set<Identifier> defined, Map<String, List<String>> tags, Set<Identifier> listed) throws IOException {
         Path data = root.resolve("data");
         if (!Files.isDirectory(data)) return;
         try (Stream<Path> namespaces = Files.list(data)) {
@@ -97,7 +97,7 @@ public final class ModBiomeScan {
                     try (Stream<Path> files = Files.walk(biomeDir)) {
                         files.filter(file -> fileName(file).endsWith(".json")).forEach(file -> {
                             String path = biomeDir.relativize(file).toString().replace('\\', '/');
-                            ResourceLocation id = ResourceLocation.tryBuild(namespace, path.substring(0, path.length() - ".json".length()));
+                            Identifier id = Identifier.tryBuild(namespace, path.substring(0, path.length() - ".json".length()));
                             if (id != null) defined.add(id);
                         });
                     }
@@ -125,12 +125,12 @@ public final class ModBiomeScan {
     }
 
     // Adds every "biome" string anywhere in the file, which is where both formats name the biomes they place
-    private static void collectBiomes(JsonElement element, Set<ResourceLocation> biomes) {
+    private static void collectBiomes(JsonElement element, Set<Identifier> biomes) {
         if (element.isJsonObject()) {
             for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
                 JsonElement value = entry.getValue();
                 if (entry.getKey().equals("biome") && value.isJsonPrimitive()) {
-                    ResourceLocation id = ResourceLocation.tryParse(value.getAsString());
+                    Identifier id = Identifier.tryParse(value.getAsString());
                     if (id != null) biomes.add(id);
                 } else {
                     collectBiomes(value, biomes);

@@ -8,7 +8,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.logging.LogUtils;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.biome.MultiNoiseBiomeSourceParameterList;
 import org.slf4j.Logger;
 
@@ -46,11 +46,11 @@ public final class BiomeConfig {
      */
     public static synchronized void init() {
         if (Files.exists(file())) return;
-        Map<ResourceLocation, Boolean> values = new HashMap<>();
-        MultiNoiseBiomeSourceParameterList.Preset.OVERWORLD.usedBiomes().forEach(key -> values.put(key.location(), true));
+        Map<Identifier, Boolean> values = new HashMap<>();
+        MultiNoiseBiomeSourceParameterList.Preset.OVERWORLD.usedBiomes().forEach(key -> values.put(key.identifier(), true));
         List<String> legacy = Services.PLATFORM.migrateLegacyConfig();
         for (String id : legacy) {
-            ResourceLocation location = ResourceLocation.tryParse(id);
+            Identifier location = Identifier.tryParse(id);
             if (location != null) values.put(location, false);
         }
         if (!legacy.isEmpty()) LOGGER.info("Moved the disabled biomes from the old config to {}", file());
@@ -67,25 +67,25 @@ public final class BiomeConfig {
     }
 
     /** Writes every known biome as enabled unless it is in disabled, keeping entries for biomes that aren't known. */
-    public static synchronized void save(Set<ResourceLocation> known, Collection<String> disabled) {
-        Map<ResourceLocation, Boolean> values = new HashMap<>();
+    public static synchronized void save(Set<Identifier> known, Collection<String> disabled) {
+        Map<Identifier, Boolean> values = new HashMap<>();
         known.forEach(id -> values.put(id, true));
         for (String id : disabled) {
-            ResourceLocation location = ResourceLocation.tryParse(id);
+            Identifier location = Identifier.tryParse(id);
             if (location != null) values.put(location, false);
         }
         write(file(), values);
     }
 
     /** Reads a config or preset file, or nothing if it is missing or broken. */
-    public static Map<ResourceLocation, Boolean> read(Path file) {
-        Map<ResourceLocation, Boolean> values = new HashMap<>();
+    public static Map<Identifier, Boolean> read(Path file) {
+        Map<Identifier, Boolean> values = new HashMap<>();
         if (!Files.isRegularFile(file)) return values;
         try (Reader reader = Files.newBufferedReader(file)) {
             JsonObject biomes = JsonParser.parseReader(reader).getAsJsonObject().getAsJsonObject("biomes");
             if (biomes == null) return values;
             for (Map.Entry<String, JsonElement> entry : biomes.entrySet()) {
-                ResourceLocation id = ResourceLocation.tryParse(entry.getKey());
+                Identifier id = Identifier.tryParse(entry.getKey());
                 if (id != null && entry.getValue().isJsonPrimitive()) values.put(id, entry.getValue().getAsBoolean());
                 else LOGGER.warn("Ignoring invalid entry {} in {}", entry.getKey(), file);
             }
@@ -96,7 +96,7 @@ public final class BiomeConfig {
     }
 
     /** Writes a config or preset file, keeping entries already in it for biomes that aren't in values. */
-    public static void write(Path file, Map<ResourceLocation, Boolean> values) {
+    public static void write(Path file, Map<Identifier, Boolean> values) {
         Map<String, Boolean> merged = new TreeMap<>();
         read(file).forEach((id, enabled) -> merged.put(id.toString(), enabled));
         values.forEach((id, enabled) -> merged.put(id.toString(), enabled));

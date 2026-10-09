@@ -87,7 +87,7 @@ final class BiomeSpotFinder {
     // The scan never saw the biome: it is below every scanned height, or farther out than the scan reaches
     private Result fallback() {
         Pair<BlockPos, Holder<Biome>> found = source.findClosestBiome3d(
-                level.getSharedSpawnPos().atY(generator.getSeaLevel()), SEARCH_RADIUS, 32, 64, holder -> holder.is(key), sampler, level);
+                level.getRespawnData().pos().atY(generator.getSeaLevel()), SEARCH_RADIUS, 32, 64, holder -> holder.is(key), sampler, level);
         if (found == null) return new Result(null, Failure.NOT_FOUND);
         BlockPos pos = found.getFirst();
         int surface = surface(pos.getX(), pos.getZ());

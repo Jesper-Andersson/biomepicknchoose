@@ -3,7 +3,7 @@
 Available on [Modrinth](https://modrinth.com/mod/biome-picknchoose) and [CurseForge](https://www.curseforge.com/minecraft/mc-mods/biome-picknchoose).
 Turn individual overworld biomes on and off, from vanilla and other mods.
 
-Requires Minecraft 1.21.1 and either NeoForge 21.1+ or Fabric with Fabric API.
+Requires Minecraft 1.21.11 and either NeoForge 21.11+ or Fabric with Fabric API.
 
 <img width="2258" height="1364" alt="image" src="https://github.com/user-attachments/assets/0438277e-343b-4aba-aabc-a9c3ae83c791" />
 
@@ -68,14 +68,14 @@ Other files under `config/`:
 
 ## For mod developers
 
-On NeoForge, to list your biomes in the menu before any world has been loaded, send an IMC message to `biomepicknchoose` with method `register_biomes` during `InterModEnqueueEvent`. The payload is a `Collection` of `ResourceLocation`, `ResourceKey`, or id `String`:
+On NeoForge, to list your biomes in the menu before any world has been loaded, send an IMC message to `biomepicknchoose` with method `register_biomes` during `InterModEnqueueEvent`. The payload is a `Collection` of `Identifier`, `ResourceKey`, or id `String`:
 
 ```java
 @SubscribeEvent
 static void enqueueIMC(InterModEnqueueEvent event) {
     InterModComms.sendTo("biomepicknchoose", "register_biomes", () -> List.of(
-            ResourceLocation.fromNamespaceAndPath("mymod", "crystal_fields"),
-            ResourceLocation.fromNamespaceAndPath("mymod", "ash_plains")));
+            Identifier.fromNamespaceAndPath("mymod", "crystal_fields"),
+            Identifier.fromNamespaceAndPath("mymod", "ash_plains")));
 }
 ```
 

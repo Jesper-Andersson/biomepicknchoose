@@ -36,6 +36,6 @@
         "java": ">=${java_version}"
     },
     "breaks": {
-        "lithostitched": "<1.8.0"
+        "lithostitched": "<1.7.2"
     }
 }

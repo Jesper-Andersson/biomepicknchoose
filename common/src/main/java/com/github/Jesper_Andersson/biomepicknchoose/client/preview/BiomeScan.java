@@ -42,7 +42,7 @@ final class BiomeScan {
     private final short[][] grid = new short[HEIGHTS.length][SIZE * SIZE];
 
     private BiomeScan(ServerLevel level) {
-        this.center = level.getSharedSpawnPos();
+        this.center = level.getRespawnData().pos();
         this.seaLevel = level.getChunkSource().getGenerator().getSeaLevel();
         this.biomes = List.copyOf(level.getChunkSource().getGenerator().getBiomeSource().possibleBiomes());
         for (int i = 0; i < biomes.size(); i++) indices.put(biomes.get(i), (short) i);

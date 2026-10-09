@@ -7,7 +7,7 @@ import com.github.Jesper_Andersson.biomepicknchoose.common.ServerConfigEditing;
 import com.github.Jesper_Andersson.biomepicknchoose.common.SmokeTest;
 import com.mojang.logging.LogUtils;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.InterModComms;
@@ -56,13 +56,13 @@ public class BiomePickNChoose {
     }
 
     private static void onInterModProcess(InterModProcessEvent event) {
-        Set<ResourceLocation> ids = new HashSet<>();
+        Set<Identifier> ids = new HashSet<>();
         InterModComms.getMessages(Constants.MOD_ID, BiomeToggles.REGISTER_BIOMES::equals).forEach(message -> {
             if (message.messageSupplier().get() instanceof Collection<?> biomes) {
                 for (Object biome : biomes) {
-                    ResourceLocation id = toId(biome);
+                    Identifier id = toId(biome);
                     if (id != null) ids.add(id);
-                    else LOGGER.warn("Ignoring biome {} from mod {}, expected a ResourceLocation, ResourceKey or String", biome, message.senderModId());
+                    else LOGGER.warn("Ignoring biome {} from mod {}, expected a Identifier, ResourceKey or String", biome, message.senderModId());
                 }
             } else {
                 LOGGER.warn("Ignoring {} message from mod {}, expected a Collection", BiomeToggles.REGISTER_BIOMES, message.senderModId());
@@ -71,10 +71,10 @@ public class BiomePickNChoose {
         BiomeToggles.setRegistered(ids);
     }
 
-    private static ResourceLocation toId(Object biome) {
-        if (biome instanceof ResourceLocation location) return location;
-        if (biome instanceof ResourceKey<?> key) return key.location();
-        if (biome instanceof String string) return ResourceLocation.tryParse(string);
+    private static Identifier toId(Object biome) {
+        if (biome instanceof Identifier location) return location;
+        if (biome instanceof ResourceKey<?> key) return key.identifier();
+        if (biome instanceof String string) return Identifier.tryParse(string);
         return null;
     }
 }

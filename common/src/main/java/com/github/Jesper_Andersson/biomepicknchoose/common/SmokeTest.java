@@ -6,7 +6,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.biome.Biome;
@@ -38,7 +38,7 @@ public final class SmokeTest {
     public static final String PROPERTY = "biomepicknchoose.smoketest";
     // In the game folder
     private static final String RESULT_FILE = "smoketest-result.txt";
-    private static final ResourceLocation RELOAD_BIOME = ResourceLocation.withDefaultNamespace("forest");
+    private static final Identifier RELOAD_BIOME = Identifier.withDefaultNamespace("forest");
     // The biome source is sampled every 64 blocks out to this distance from spawn, without generating chunks
     // Then chunks are generated up to their biomes around the spot nearest to spawn where vanilla would place the biome,
     // and read back from the world
@@ -55,7 +55,7 @@ public final class SmokeTest {
     private static BlockPos firstCenter;
     private static boolean reloading;
     // The biome disabled at the start, set once the property was parsed
-    private static ResourceLocation firstBiome;
+    private static Identifier firstBiome;
 
     private SmokeTest() {}
 
@@ -78,7 +78,7 @@ public final class SmokeTest {
         watchdog.setDaemon(true);
         watchdog.start();
 
-        ResourceLocation id = ResourceLocation.tryParse(System.getProperty(PROPERTY));
+        Identifier id = Identifier.tryParse(System.getProperty(PROPERTY));
         if (id == null) {
             LOGGER.error("Smoke test FAILED: invalid biome id {}", System.getProperty(PROPERTY));
             finish(server, false);
@@ -98,7 +98,7 @@ public final class SmokeTest {
     static void onReload(MinecraftServer server) {
         if (!enabled() || !reloading) return;
         reloading = false;
-        ResourceLocation first = firstBiome;
+        Identifier first = firstBiome;
         if (BiomeToggles.isDisabled(ResourceKey.create(Registries.BIOME, first))) {
             LOGGER.error("Smoke test FAILED: {} is still disabled after /reload", first);
             finish(server, false);
@@ -145,7 +145,7 @@ public final class SmokeTest {
         Runtime.getRuntime().halt(result ? 0 : 1);
     }
 
-    private static boolean check(MinecraftServer server, ResourceLocation id, @Nullable BlockPos exclude) {
+    private static boolean check(MinecraftServer server, Identifier id, @Nullable BlockPos exclude) {
         ResourceKey<Biome> target = ResourceKey.create(Registries.BIOME, id);
         if (!BiomeToggles.isDisabled(target)) {
             LOGGER.error("Smoke test FAILED: {} isn't disabled, check the run's config", id);
@@ -157,9 +157,9 @@ public final class SmokeTest {
         Climate.Sampler sampler = overworld.getChunkSource().randomState().sampler();
         // The vanilla overworld parameters, without the mod, to show the biome would have generated at all
         Climate.ParameterList<Holder<Biome>> vanilla = server.registryAccess()
-                .registryOrThrow(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST)
-                .getHolderOrThrow(MultiNoiseBiomeSourceParameterLists.OVERWORLD).value().parameters();
-        BlockPos spawn = overworld.getSharedSpawnPos();
+                .lookupOrThrow(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST)
+                .getOrThrow(MultiNoiseBiomeSourceParameterLists.OVERWORLD).value().parameters();
+        BlockPos spawn = overworld.getRespawnData().pos();
         int quartY = QuartPos.fromBlock(SAMPLE_Y);
 
         // The biome source over a wide area, remembering where vanilla would place the biome nearest to spawn

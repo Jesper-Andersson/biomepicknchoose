@@ -3,8 +3,8 @@ package com.github.Jesper_Andersson.biomepicknchoose.client.gui;
 import com.github.Jesper_Andersson.biomepicknchoose.Constants;
 import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeConfig;
 import com.mojang.logging.LogUtils;
-import net.minecraft.Util;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.Util;
+import net.minecraft.resources.Identifier;
 import com.github.Jesper_Andersson.biomepicknchoose.platform.Services;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -58,12 +58,12 @@ public final class BiomePresets {
         return Files.isRegularFile(file(name));
     }
 
-    public static Map<ResourceLocation, Boolean> load(String name) {
+    public static Map<Identifier, Boolean> load(String name) {
         return BiomeConfig.read(file(name));
     }
 
     /** Writes the preset, keeping entries already in the file for biomes that aren't in values. */
-    public static void save(String name, Map<ResourceLocation, Boolean> values) {
+    public static void save(String name, Map<Identifier, Boolean> values) {
         BiomeConfig.write(file(name), values);
     }
 

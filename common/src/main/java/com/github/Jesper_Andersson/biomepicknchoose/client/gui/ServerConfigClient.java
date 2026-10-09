@@ -4,7 +4,7 @@ import com.github.Jesper_Andersson.biomepicknchoose.common.ServerConfigEditing;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 import java.util.Objects;
 import java.util.Set;
@@ -18,8 +18,8 @@ public final class ServerConfigClient {
     /** Called on the client thread when the server sends its config. */
     public static void open(ServerConfigEditing.OpenPayload payload) {
         Minecraft minecraft = Minecraft.getInstance();
-        Set<ResourceLocation> known = payload.known().stream()
-                .map(ResourceLocation::tryParse)
+        Set<Identifier> known = payload.known().stream()
+                .map(Identifier::tryParse)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(TreeSet::new));
         minecraft.setScreen(BiomeToggleScreen.forServer(minecraft.screen, known, payload.disabled(), disabled -> {

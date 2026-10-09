@@ -12,8 +12,9 @@ import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.permissions.PermissionCheck;
 import org.slf4j.Logger;
 
 import java.util.List;
@@ -25,14 +26,14 @@ import java.util.List;
  */
 public final class ServerConfigEditing {
     private static final Logger LOGGER = LogUtils.getLogger();
-    public static final int PERMISSION_LEVEL = Commands.LEVEL_GAMEMASTERS;
+    public static final PermissionCheck PERMISSION = Commands.LEVEL_GAMEMASTERS;
     private static final StreamCodec<ByteBuf, List<String>> IDS = ByteBufCodecs.STRING_UTF8.apply(ByteBufCodecs.list());
 
     private ServerConfigEditing() {}
 
     /** Server to client: the biomes the server knows, and the ones its config disables. */
     public record OpenPayload(List<String> known, List<String> disabled) implements CustomPacketPayload {
-        public static final Type<OpenPayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "open_server_config"));
+        public static final Type<OpenPayload> TYPE = new Type<>(Identifier.fromNamespaceAndPath(Constants.MOD_ID, "open_server_config"));
         public static final StreamCodec<ByteBuf, OpenPayload> CODEC = StreamCodec.composite(
                 IDS, OpenPayload::known, IDS, OpenPayload::disabled, OpenPayload::new);
 
@@ -44,7 +45,7 @@ public final class ServerConfigEditing {
 
     /** Client to server: the biomes to disable in the server's config. */
     public record SavePayload(List<String> disabled) implements CustomPacketPayload {
-        public static final Type<SavePayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID, "save_server_config"));
+        public static final Type<SavePayload> TYPE = new Type<>(Identifier.fromNamespaceAndPath(Constants.MOD_ID, "save_server_config"));
         public static final StreamCodec<ByteBuf, SavePayload> CODEC = IDS.map(SavePayload::new, SavePayload::disabled);
 
         @Override
@@ -55,7 +56,7 @@ public final class ServerConfigEditing {
 
     public static void registerCommand(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal(Constants.MOD_ID)
-                .requires(source -> source.hasPermission(PERMISSION_LEVEL))
+                .requires(Commands.hasPermission(PERMISSION))
                 .then(Commands.literal("config").executes(context -> {
                     ServerPlayer player = context.getSource().getPlayerOrException();
                     // Plain text fallbacks, since a client without the mod has no translations for them
@@ -64,7 +65,7 @@ public final class ServerConfigEditing {
                                 "Install Biome Pick'n'Choose on your client to edit the server's biomes"));
                         return 0;
                     }
-                    List<String> known = BiomeToggles.serverKnownBiomes(player.server).stream().map(ResourceLocation::toString).toList();
+                    List<String> known = BiomeToggles.serverKnownBiomes(player.level().getServer()).stream().map(Identifier::toString).toList();
                     player.connection.send(new ClientboundCustomPayloadPacket(new OpenPayload(known, BiomeConfig.disabledBiomes())));
                     return 1;
                 })));
@@ -73,12 +74,12 @@ public final class ServerConfigEditing {
     /** Called on the server thread when a client sends the edited config. */
     public static void handleSave(ServerPlayer player, SavePayload payload) {
         // Checked again, since any client with the mod can send this
-        if (!player.hasPermissions(PERMISSION_LEVEL)) {
-            LOGGER.warn("{} tried to change the biome config without permission", player.getGameProfile().getName());
+        if (!PERMISSION.check(player.permissions())) {
+            LOGGER.warn("{} tried to change the biome config without permission", player.getGameProfile().name());
             return;
         }
-        BiomeConfig.save(BiomeToggles.serverKnownBiomes(player.server), payload.disabled());
-        LOGGER.info("{} changed the biome config, disabled biomes: {}", player.getGameProfile().getName(), payload.disabled());
+        BiomeConfig.save(BiomeToggles.serverKnownBiomes(player.level().getServer()), payload.disabled());
+        LOGGER.info("{} changed the biome config, disabled biomes: {}", player.getGameProfile().name(), payload.disabled());
         player.sendSystemMessage(Component.translatableWithFallback("biomepicknchoose.server_config.saved",
                 "Saved the server's biome config. Run /reload to apply it to newly generated chunks"));
     }

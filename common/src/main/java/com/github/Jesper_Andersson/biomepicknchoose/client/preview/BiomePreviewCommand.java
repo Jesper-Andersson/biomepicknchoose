@@ -7,7 +7,7 @@ import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.function.BiConsumer;
@@ -41,7 +41,7 @@ public final class BiomePreviewCommand<S> {
                 .executes(context -> capture(context, null, missingOnly))
                 .then(RequiredArgumentBuilder.<S, String>argument("namespace", StringArgumentType.word())
                         .suggests((context, builder) -> SharedSuggestionProvider.suggest(
-                                BiomeToggles.knownBiomes().stream().map(ResourceLocation::getNamespace).distinct(), builder))
+                                BiomeToggles.knownBiomes().stream().map(Identifier::getNamespace).distinct(), builder))
                         .executes(context -> capture(context, StringArgumentType.getString(context, "namespace"), missingOnly)));
     }
 

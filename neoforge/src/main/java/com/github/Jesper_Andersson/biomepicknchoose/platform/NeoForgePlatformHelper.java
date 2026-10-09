@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -53,9 +54,24 @@ public class NeoForgePlatformHelper implements IPlatformHelper {
         return biomes;
     }
 
+    // Folders as they are, and jars opened as zip file systems, which stay open since the scan only runs once
     @Override
     public List<Path> getModRoots() {
-        return ModList.get().getModFiles().stream().map(file -> file.getFile().getSecureJar().getRootPath()).toList();
+        List<Path> roots = new ArrayList<>();
+        for (var file : ModList.get().getModFiles()) {
+            for (Path root : file.getFile().getContents().getContentRoots()) {
+                if (Files.isDirectory(root)) {
+                    roots.add(root);
+                } else if (Files.isRegularFile(root)) {
+                    try {
+                        roots.add(FileSystems.newFileSystem(root).getPath("/"));
+                    } catch (IOException | RuntimeException e) {
+                        LOGGER.warn("Couldn't open {}", root, e);
+                    }
+                }
+            }
+        }
+        return roots;
     }
 
     @Override

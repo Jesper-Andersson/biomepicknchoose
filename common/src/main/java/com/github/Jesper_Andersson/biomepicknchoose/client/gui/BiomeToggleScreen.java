@@ -21,10 +21,13 @@ import net.minecraft.client.gui.narration.NarratableEntry;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.locale.Language;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.FormattedCharSequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -58,12 +61,11 @@ public final class BiomeToggleScreen extends Screen {
     private static final int TAB_PADDING = 16;
     private static final int TAB_MIN_WIDTH = 60;
     private static final int TAB_MARGIN = 28;
-    // Rows are drawn 2 pixels right of where the selection outline starts, so keep this much free on the right to not
-    // cover the outline
-    private static final int ROW_RIGHT_INSET = 4;
     private static final int PANEL_TEXT_HEIGHT = 26;
     private static final int PANEL_BUTTON_HEIGHT = 24;
-    private static final int HINT_COLOR = 0xA0A0A0;
+    // Text colours need an alpha channel, or the text is invisible
+    private static final int HINT_COLOR = 0xFFA0A0A0;
+    private static final int TEXT_COLOR = 0xFFFFFFFF;
     // Thumbnails in the rows, half the size of the pictures BiomePreviews makes, so they are sharp at GUI scale 2
     private static final int THUMBNAIL_WIDTH = BiomePreviews.THUMBNAIL_WIDTH / 2;
     private static final int THUMBNAIL_HEIGHT = BiomePreviews.THUMBNAIL_HEIGHT / 2;
@@ -74,7 +76,7 @@ public final class BiomeToggleScreen extends Screen {
 
     private final Screen parent;
     private final Set<String> disabled;
-    private final Set<ResourceLocation> known;
+    private final Set<Identifier> known;
     private final Consumer<List<String>> onSave;
     // Editing the config of the server this client is connected to
     private final boolean remote;
@@ -87,13 +89,13 @@ public final class BiomeToggleScreen extends Screen {
     private Button removePreview;
     // Biome the remove button applies to, set while it is shown
     @Nullable
-    private ResourceLocation removeTarget;
+    private Identifier removeTarget;
     // Restored when the widgets are rebuilt after loading a preset
     private int selectedTab;
     // Shared by all tabs
     private SortMode sortMode = SortMode.ALPHABETICAL;
     @Nullable
-    private ResourceLocation lastShownId;
+    private Identifier lastShownId;
     private boolean hasKnownBiomes;
     // Preview image area, or null when the screen is too narrow for the side panel
     @Nullable
@@ -106,11 +108,11 @@ public final class BiomeToggleScreen extends Screen {
     }
 
     /** Edits the server's config, from the biomes it sent. onSave sends the disabled biomes back. */
-    public static BiomeToggleScreen forServer(@Nullable Screen parent, Set<ResourceLocation> known, List<String> disabled, Consumer<List<String>> onSave) {
+    public static BiomeToggleScreen forServer(@Nullable Screen parent, Set<Identifier> known, List<String> disabled, Consumer<List<String>> onSave) {
         return new BiomeToggleScreen(parent, Component.translatable("biomepicknchoose.configuration.title.server"), known, disabled, onSave, true);
     }
 
-    private BiomeToggleScreen(@Nullable Screen parent, Component title, Set<ResourceLocation> known, List<String> disabled,
+    private BiomeToggleScreen(@Nullable Screen parent, Component title, Set<Identifier> known, List<String> disabled,
                               @Nullable Consumer<List<String>> onSave, boolean remote) {
         super(title);
         this.parent = parent;
@@ -125,9 +127,9 @@ public final class BiomeToggleScreen extends Screen {
         // The server sends its own biomes, so they are always complete
         hasKnownBiomes = remote || Files.isRegularFile(BiomeToggles.knownBiomesFile());
 
-        Map<String, List<ResourceLocation>> byNamespace = new TreeMap<>(
+        Map<String, List<Identifier>> byNamespace = new TreeMap<>(
                 Comparator.comparingInt(BiomeToggleScreen::namespaceOrder).thenComparing(Comparator.naturalOrder()));
-        for (ResourceLocation id : known) {
+        for (Identifier id : known) {
             byNamespace.computeIfAbsent(id.getNamespace(), ns -> new ArrayList<>()).add(id);
         }
         tabs = byNamespace.entrySet().stream()
@@ -205,8 +207,8 @@ public final class BiomeToggleScreen extends Screen {
     }
 
     @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        return tabNavigationBar.keyPressed(keyCode) || super.keyPressed(keyCode, scanCode, modifiers);
+    public boolean keyPressed(KeyEvent event) {
+        return tabNavigationBar.keyPressed(event) || super.keyPressed(event);
     }
 
     @Override
@@ -231,10 +233,10 @@ public final class BiomeToggleScreen extends Screen {
         int y = preview.top();
         int w = preview.width();
         int h = preview.height();
-        guiGraphics.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF000000 | HINT_COLOR);
-        ResourceLocation texture = BiomePreviews.textureFor(row.id);
+        guiGraphics.fill(x - 1, y - 1, x + w + 1, y + h + 1, HINT_COLOR);
+        Identifier texture = BiomePreviews.textureFor(row.id);
         if (texture != null) {
-            guiGraphics.blit(texture, x, y, 0, 0, w, h, w, h);
+            guiGraphics.blit(RenderPipelines.GUI_TEXTURED, texture, x, y, 0, 0, w, h, w, h);
         } else {
             guiGraphics.fill(x, y, x + w, y + h, 0xFF101010);
             List<FormattedCharSequence> lines = font.split(Component.translatable("biomepicknchoose.configuration.preview.none"), w - 16);
@@ -244,7 +246,7 @@ public final class BiomeToggleScreen extends Screen {
                 lineY += font.lineHeight;
             }
         }
-        guiGraphics.drawString(font, Language.getInstance().getVisualOrder(font.substrByWidth(row.name, w)), x, y + h + 5, 0xFFFFFF);
+        guiGraphics.drawString(font, Language.getInstance().getVisualOrder(font.substrByWidth(row.name, w)), x, y + h + 5, TEXT_COLOR);
         guiGraphics.drawString(font, row.id.toString(), x, y + h + 16, HINT_COLOR);
     }
 
@@ -259,7 +261,7 @@ public final class BiomeToggleScreen extends Screen {
     }
 
     private void confirmRemovePreview() {
-        ResourceLocation id = removeTarget;
+        Identifier id = removeTarget;
         if (id == null) return;
         minecraft.setScreen(new ConfirmScreen(confirmed -> {
             if (confirmed) BiomePreviews.delete(id);
@@ -296,7 +298,7 @@ public final class BiomeToggleScreen extends Screen {
 
     // Minecraft first, then other mods alphabetically
     private static int namespaceOrder(String namespace) {
-        return namespace.equals(ResourceLocation.DEFAULT_NAMESPACE) ? 0 : 1;
+        return namespace.equals(Identifier.DEFAULT_NAMESPACE) ? 0 : 1;
     }
 
     private static Component tabTitle(String namespace) {
@@ -312,20 +314,24 @@ public final class BiomeToggleScreen extends Screen {
         private final Button disableAll;
         private final CycleButton<SortMode> sortButton;
 
-        BiomeTab(Component title, List<ResourceLocation> biomes) {
+        BiomeTab(Component title, List<Identifier> biomes) {
             this.title = title;
             this.list = new BiomeList(minecraft, biomes);
             this.enableAll = Button.builder(Component.translatable("biomepicknchoose.configuration.enable_all"), button -> list.setAll(true)).width(150).build();
             this.disableAll = Button.builder(Component.translatable("biomepicknchoose.configuration.disable_all"), button -> list.setAll(false)).width(150).build();
-            this.sortButton = CycleButton.<SortMode>builder(mode -> Component.translatable(mode.key))
+            this.sortButton = CycleButton.<SortMode>builder(mode -> Component.translatable(mode.key), sortMode)
                     .withValues(SortMode.values())
-                    .withInitialValue(sortMode)
                     .create(0, 0, 100, 20, Component.translatable("biomepicknchoose.configuration.sort"), (button, mode) -> setSortMode(mode));
         }
 
         @Override
         public Component getTabTitle() {
             return title;
+        }
+
+        @Override
+        public Component getTabExtraNarration() {
+            return CommonComponents.EMPTY;
         }
 
         @Override
@@ -360,7 +366,7 @@ public final class BiomeToggleScreen extends Screen {
     private final class BiomeList extends ContainerObjectSelectionList<BiomeRow> {
         private int rowWidth = ROW_WIDTH;
 
-        BiomeList(Minecraft minecraft, List<ResourceLocation> biomes) {
+        BiomeList(Minecraft minecraft, List<Identifier> biomes) {
             super(minecraft, 0, 0, 0, ROW_HEIGHT);
             biomes.stream().map(BiomeRow::new).forEach(this::addEntry);
             sort(sortMode);
@@ -379,7 +385,7 @@ public final class BiomeToggleScreen extends Screen {
             children().forEach(row -> row.setEnabled(enabled));
         }
 
-        void show(ResourceLocation id) {
+        void show(Identifier id) {
             children().stream().filter(row -> row.id.equals(id)).findFirst().ifPresent(this::setSelected);
         }
 
@@ -387,7 +393,7 @@ public final class BiomeToggleScreen extends Screen {
         BiomeRow previewBiome() {
             BiomeRow selected = getSelected();
             if (selected != null) return selected;
-            return children().isEmpty() ? null : getFirstElement();
+            return children().isEmpty() ? null : children().getFirst();
         }
 
         // Focusing a row selects it. Keep the selection when the focus moves elsewhere, like to Enable all
@@ -400,8 +406,8 @@ public final class BiomeToggleScreen extends Screen {
 
         // ContainerObjectSelectionList never highlights a row
         @Override
-        protected boolean isSelectedItem(int index) {
-            return getSelected() != null && children().get(index) == getSelected();
+        protected boolean entriesCanBeSelected() {
+            return true;
         }
 
         @Override
@@ -411,15 +417,14 @@ public final class BiomeToggleScreen extends Screen {
     }
 
     private final class BiomeRow extends ContainerObjectSelectionList.Entry<BiomeRow> {
-        private final ResourceLocation id;
+        private final Identifier id;
         private final Component name;
         private final CycleButton<Boolean> toggle;
 
-        BiomeRow(ResourceLocation id) {
+        BiomeRow(Identifier id) {
             this.id = id;
             this.name = Component.translatableWithFallback("biome." + id.getNamespace() + "." + id.getPath(), id.toString());
-            this.toggle = CycleButton.booleanBuilder(ON, OFF)
-                    .withInitialValue(!disabled.contains(id.toString()))
+            this.toggle = CycleButton.booleanBuilder(ON, OFF, !disabled.contains(id.toString()))
                     .displayOnlyValue()
                     .withTooltip(enabled -> Tooltip.create(Component.literal(id.toString())))
                     .create(0, 0, 60, 20, name, (button, enabled) -> updateDisabled(enabled));
@@ -437,31 +442,34 @@ public final class BiomeToggleScreen extends Screen {
 
         // Clicking anywhere on the row selects it, not only on the toggle
         @Override
-        public boolean mouseClicked(double mouseX, double mouseY, int button) {
-            super.mouseClicked(mouseX, mouseY, button);
-            return button == 0;
+        public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
+            super.mouseClicked(event, isDoubleClick);
+            return event.button() == 0;
         }
 
         @Override
-        public void render(GuiGraphics guiGraphics, int index, int top, int left, int width, int height,
-                           int mouseX, int mouseY, boolean hovering, float partialTick) {
+        public void renderContent(GuiGraphics guiGraphics, int mouseX, int mouseY, boolean hovering, float partialTick) {
+            int left = getContentX();
+            int top = getContentY();
+            int width = getContentWidth();
+            int height = getContentHeight();
             boolean compact = width < COMPACT_ROW_WIDTH;
             int thumbnailWidth = compact ? COMPACT_THUMBNAIL_WIDTH : THUMBNAIL_WIDTH;
             int thumbnailHeight = compact ? COMPACT_THUMBNAIL_HEIGHT : THUMBNAIL_HEIGHT;
             toggle.setWidth(compact ? 44 : 60);
             int thumbnailTop = top + (height - thumbnailHeight) / 2;
-            ResourceLocation thumbnail = BiomePreviews.thumbnailFor(id);
+            Identifier thumbnail = BiomePreviews.thumbnailFor(id);
             if (thumbnail != null) {
-                guiGraphics.blit(thumbnail, left, thumbnailTop, thumbnailWidth, thumbnailHeight, 0, 0,
+                guiGraphics.blit(RenderPipelines.GUI_TEXTURED, thumbnail, left, thumbnailTop, 0, 0, thumbnailWidth, thumbnailHeight,
                         BiomePreviews.THUMBNAIL_WIDTH, BiomePreviews.THUMBNAIL_HEIGHT, BiomePreviews.THUMBNAIL_WIDTH, BiomePreviews.THUMBNAIL_HEIGHT);
             } else {
                 guiGraphics.fill(left, thumbnailTop, left + thumbnailWidth, thumbnailTop + thumbnailHeight, 0xFF101010);
             }
             int nameLeft = left + thumbnailWidth + 6;
-            int maxNameWidth = width - ROW_RIGHT_INSET - thumbnailWidth - 6 - toggle.getWidth() - 6;
+            int maxNameWidth = width - thumbnailWidth - 6 - toggle.getWidth() - 6;
             guiGraphics.drawString(font, Language.getInstance().getVisualOrder(font.substrByWidth(name, maxNameWidth)),
-                    nameLeft, top + (height - font.lineHeight) / 2, 0xFFFFFF);
-            toggle.setPosition(left + width - ROW_RIGHT_INSET - toggle.getWidth(), top + (height - toggle.getHeight()) / 2);
+                    nameLeft, top + (height - font.lineHeight) / 2, TEXT_COLOR);
+            toggle.setPosition(left + width - toggle.getWidth(), top + (height - toggle.getHeight()) / 2);
             toggle.render(guiGraphics, mouseX, mouseY, partialTick);
         }
 
