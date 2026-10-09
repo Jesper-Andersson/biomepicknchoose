@@ -48,7 +48,7 @@ public final class CaveBiomes {
     public static Set<Identifier> fromServer(MinecraftServer server) {
         Set<Identifier> ids = new TreeSet<>();
         var source = server.overworld().getChunkSource().getGenerator().getBiomeSource();
-        if (BiomeSources.root(source) instanceof BiomeToggleSource root) {
+        if (BiomeSources.root(source) instanceof BiomeToggleSource root && root.bpnc$parameters() != null) {
             for (Holder<Biome> biome : find(root.bpnc$parameters().values())) {
                 biome.unwrapKey().ifPresent(key -> ids.add(key.identifier()));
             }

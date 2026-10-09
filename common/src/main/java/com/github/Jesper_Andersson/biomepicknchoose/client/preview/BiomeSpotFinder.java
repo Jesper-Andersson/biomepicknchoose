@@ -63,7 +63,7 @@ final class BiomeSpotFinder {
 
     private Result find(BiomeScan scan) {
         List<BiomeScan.Candidate> candidates = scan.candidates(key, cave);
-        if (candidates.isEmpty()) return fallback();
+        if (candidates.isEmpty()) return fallback(scan.center());
         if (cave) return findCave(candidates);
 
         List<BlockPos> seen = new ArrayList<>();
@@ -79,6 +79,8 @@ final class BiomeSpotFinder {
             // Cave biomes are found below a surface that belongs to some other biome
             if (!isTarget(pos.getX(), surface, pos.getZ())) continue;
             double score = interiorScore(pos.getX(), surface, pos.getZ());
+            // Prefer land over the End's void, where the surface is the bottom of the world
+            if (surface <= level.getMinY()) score /= 2;
             if (score > bestScore) {
                 bestScore = score;
                 best = pos.atY(surface);
@@ -108,9 +110,9 @@ final class BiomeSpotFinder {
     }
 
     // The scan never saw the biome: it is below every scanned height, or farther out than the scan reaches
-    private Result fallback() {
+    private Result fallback(BlockPos center) {
         Pair<BlockPos, Holder<Biome>> found = source.findClosestBiome3d(
-                level.getRespawnData().pos().atY(generator.getSeaLevel()), SEARCH_RADIUS, 32, 64, holder -> holder.is(key), sampler, level);
+                center.atY(generator.getSeaLevel()), SEARCH_RADIUS, 32, 64, holder -> holder.is(key), sampler, level);
         if (found == null) return new Result(null, Failure.NOT_FOUND);
         BlockPos pos = found.getFirst();
         if (cave) return new Result(caveSpot(pos), null);

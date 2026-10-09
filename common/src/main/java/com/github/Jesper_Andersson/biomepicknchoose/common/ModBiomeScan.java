@@ -19,46 +19,75 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Stream;
 
 /**
- * Finds the overworld biomes of installed mods from their data files, so the menu can list them before any world was
- * loaded. A biome counts when a mod defines it, and it is either in an overworld biome tag but no Nether or End tag,
- * or listed in a replaced overworld dimension or biome parameter list. TerraBlender based mods like Biomes O' Plenty
- * tag their biomes, and datapack style mods like Terralith replace the overworld. Loading a world is still the
- * complete list, since a mod can also place biomes from code.
+ * Finds the biomes of installed mods from their data files, so the menu can list them before any world was loaded. A
+ * biome counts for a vanilla dimension when a mod defines it, and it is either in that dimension's biome tag, or listed
+ * in a replaced dimension or biome parameter list. Overworld tagged biomes that are also in a Nether or End tag don't
+ * count for the overworld. TerraBlender based mods like Biomes O' Plenty tag their biomes, and datapack style mods like
+ * Terralith replace the overworld. Dimensions that mods add are found from their dimension files, with the biomes
+ * those list. Loading a world is still the complete list, since a mod can also place biomes or add dimensions from
+ * code.
  */
 public final class ModBiomeScan {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final List<String> TAG_NAMESPACES = List.of("minecraft", "c", "forge", "neoforge");
-    private static final String OVERWORLD_TAG = "is_overworld";
-    private static final List<String> OTHER_TAGS = List.of("is_nether", "is_end", "is_the_end");
-    private static final List<String> ALL_TAGS = Stream.concat(Stream.of(OVERWORLD_TAG), OTHER_TAGS.stream()).toList();
-    private static final List<String> OVERWORLD_FILES = List.of(
-            "data/minecraft/dimension/overworld.json",
-            "data/minecraft/worldgen/multi_noise_biome_source_parameter_list/overworld.json");
+    private static final Map<BiomeDimension, List<String>> TAGS = Map.of(
+            BiomeDimension.OVERWORLD, List.of("is_overworld"),
+            BiomeDimension.NETHER, List.of("is_nether"),
+            BiomeDimension.END, List.of("is_end", "is_the_end"));
+    // Ocean and river biomes, which the menu colours blue
+    private static final List<String> WATER_TAGS = List.of("is_ocean", "is_deep_ocean", "is_river", "is_aquatic");
+    private static final List<String> ALL_TAGS = Stream.concat(TAGS.values().stream().flatMap(List::stream), WATER_TAGS.stream()).toList();
+    // Replaced vanilla biome parameter lists. Dimension files, vanilla or not, are found in every namespace
+    private static final Map<BiomeDimension, String> PARAMETER_LIST_FILES = Map.of(
+            BiomeDimension.OVERWORLD, "data/minecraft/worldgen/multi_noise_biome_source_parameter_list/overworld.json",
+            BiomeDimension.NETHER, "data/minecraft/worldgen/multi_noise_biome_source_parameter_list/nether.json");
+
+    private record Found(Map<BiomeDimension, Set<Identifier>> dimensions, Set<Identifier> water) {}
 
     // The mods can't change while the game runs, so this is only done once
-    private static volatile Set<Identifier> found;
+    private static volatile Found found;
 
     private ModBiomeScan() {}
 
-    public static Set<Identifier> overworldBiomes() {
-        Set<Identifier> biomes = found;
-        if (biomes == null) {
-            long start = System.nanoTime();
-            biomes = Set.copyOf(scan());
-            found = biomes;
-            LOGGER.info("Found {} overworld biomes in the files of installed mods in {} ms", biomes.size(), (System.nanoTime() - start) / 1_000_000);
-        }
-        return biomes;
+    public static Set<Identifier> biomes(BiomeDimension dimension) {
+        return found().dimensions().getOrDefault(dimension, Set.of());
     }
 
-    private static Set<Identifier> scan() {
+    /** The vanilla dimensions, and the ones installed mods add in dimension files. */
+    public static Set<BiomeDimension> dimensions() {
+        return found().dimensions().keySet();
+    }
+
+    /** Biomes of installed mods in an ocean or river tag. */
+    public static Set<Identifier> waterBiomes() {
+        return found().water();
+    }
+
+    private static Found found() {
+        Found result = found;
+        if (result == null) {
+            long start = System.nanoTime();
+            result = scan();
+            found = result;
+            Map<BiomeDimension, Set<Identifier>> biomes = result.dimensions();
+            LOGGER.info("Found {} overworld, {} Nether, {} End biomes and {} other dimensions in the files of installed mods in {} ms",
+                    biomes.get(BiomeDimension.OVERWORLD).size(), biomes.get(BiomeDimension.NETHER).size(),
+                    biomes.get(BiomeDimension.END).size(), biomes.size() - BiomeDimension.VANILLA.size(),
+                    (System.nanoTime() - start) / 1_000_000);
+        }
+        return result;
+    }
+
+    private static Found scan() {
         Set<Identifier> defined = new HashSet<>();
         // Tag id to its entries, from every mod: biome ids, and other tags as "#namespace:path"
         Map<String, List<String>> tags = new HashMap<>();
-        Set<Identifier> listed = new HashSet<>();
+        Map<BiomeDimension, Set<Identifier>> listed = new TreeMap<>();
+        for (BiomeDimension dimension : BiomeDimension.VANILLA) listed.put(dimension, new HashSet<>());
         for (Path root : Services.PLATFORM.getModRoots()) {
             try {
                 scanRoot(root, defined, tags, listed);
@@ -67,26 +96,43 @@ public final class ModBiomeScan {
             }
         }
 
-        Set<String> overworld = new HashSet<>();
-        Set<String> other = new HashSet<>();
-        for (String namespace : TAG_NAMESPACES) {
-            resolve(tags, namespace + ":" + OVERWORLD_TAG, overworld, new HashSet<>());
-            for (String tag : OTHER_TAGS) resolve(tags, namespace + ":" + tag, other, new HashSet<>());
+        Map<BiomeDimension, Set<String>> tagged = new HashMap<>();
+        for (BiomeDimension dimension : BiomeDimension.VANILLA) {
+            Set<String> ids = new HashSet<>();
+            for (String namespace : TAG_NAMESPACES) {
+                for (String tag : TAGS.get(dimension)) resolve(tags, namespace + ":" + tag, ids, new HashSet<>());
+            }
+            tagged.put(dimension, ids);
         }
-        overworld.removeAll(other);
+        tagged.get(BiomeDimension.OVERWORLD).removeAll(tagged.get(BiomeDimension.NETHER));
+        tagged.get(BiomeDimension.OVERWORLD).removeAll(tagged.get(BiomeDimension.END));
 
-        Set<Identifier> biomes = new HashSet<>();
-        for (String id : overworld) {
-            Identifier location = Identifier.tryParse(id);
-            if (location != null) biomes.add(location);
+        Map<BiomeDimension, Set<Identifier>> result = new TreeMap<>();
+        for (Map.Entry<BiomeDimension, Set<Identifier>> entry : listed.entrySet()) {
+            Set<Identifier> biomes = new HashSet<>(entry.getValue());
+            for (String id : tagged.getOrDefault(entry.getKey(), Set.of())) {
+                Identifier location = Identifier.tryParse(id);
+                if (location != null) biomes.add(location);
+            }
+            // Entries for mods that aren't installed, which tags can name as optional. Vanilla biomes always exist
+            biomes.removeIf(id -> !defined.contains(id) && !id.getNamespace().equals(Identifier.DEFAULT_NAMESPACE));
+            result.put(entry.getKey(), Set.copyOf(biomes));
         }
-        biomes.addAll(listed);
-        // Entries for mods that aren't installed, which tags can name as optional
-        biomes.retainAll(defined);
-        return biomes;
+
+        Set<String> waterTagged = new HashSet<>();
+        for (String namespace : TAG_NAMESPACES) {
+            for (String tag : WATER_TAGS) resolve(tags, namespace + ":" + tag, waterTagged, new HashSet<>());
+        }
+        Set<Identifier> water = new HashSet<>();
+        for (String id : waterTagged) {
+            Identifier location = Identifier.tryParse(id);
+            if (location != null && defined.contains(location)) water.add(location);
+        }
+        return new Found(result, Set.copyOf(water));
     }
 
-    private static void scanRoot(Path root, Set<Identifier> defined, Map<String, List<String>> tags, Set<Identifier> listed) throws IOException {
+    private static void scanRoot(Path root, Set<Identifier> defined, Map<String, List<String>> tags,
+                                 Map<BiomeDimension, Set<Identifier>> listed) throws IOException {
         Path data = root.resolve("data");
         if (!Files.isDirectory(data)) return;
         try (Stream<Path> namespaces = Files.list(data)) {
@@ -100,6 +146,16 @@ public final class ModBiomeScan {
                             Identifier id = Identifier.tryBuild(namespace, path.substring(0, path.length() - ".json".length()));
                             if (id != null) defined.add(id);
                         });
+                    }
+                }
+                Path dimensionDir = namespaceDir.resolve("dimension");
+                if (Files.isDirectory(dimensionDir)) {
+                    try (Stream<Path> files = Files.walk(dimensionDir)) {
+                        for (Path file : files.filter(file -> fileName(file).endsWith(".json")).toList()) {
+                            String path = dimensionDir.relativize(file).toString().replace('\\', '/');
+                            Identifier id = Identifier.tryBuild(namespace, path.substring(0, path.length() - ".json".length()));
+                            if (id != null) collectDimension(read(file), listed.computeIfAbsent(new BiomeDimension(id), key -> new HashSet<>()));
+                        }
                     }
                 }
             }
@@ -118,9 +174,37 @@ public final class ModBiomeScan {
                 }
             }
         }
-        for (String name : OVERWORLD_FILES) {
-            Path file = root.resolve(name);
-            if (Files.isRegularFile(file)) collectBiomes(read(file), listed);
+        for (Map.Entry<BiomeDimension, String> entry : PARAMETER_LIST_FILES.entrySet()) {
+            Path file = root.resolve(entry.getValue());
+            if (Files.isRegularFile(file)) collectBiomes(read(file), listed.get(entry.getKey()));
+        }
+    }
+
+    // The biomes a dimension file names, and the vanilla ones of a vanilla biome source preset it uses. Only looks at
+    // the biome source, since the dimension's own "type" names a dimension type, like minecraft:overworld
+    private static void collectDimension(JsonObject dimension, Set<Identifier> biomes) {
+        JsonElement generator = dimension.get("generator");
+        if (generator == null || !generator.isJsonObject()) return;
+        JsonElement source = generator.getAsJsonObject().get("biome_source");
+        if (source == null) return;
+        collectBiomes(source, biomes);
+        Set<String> values = new HashSet<>();
+        collectStrings(source, Set.of("preset", "type"), values);
+        if (values.contains("minecraft:overworld")) biomes.addAll(BiomeDimension.OVERWORLD.vanilla());
+        if (values.contains("minecraft:nether")) biomes.addAll(BiomeDimension.NETHER.vanilla());
+        if (values.contains("minecraft:the_end")) biomes.addAll(BiomeDimension.END.vanilla());
+    }
+
+    // Adds the string values of the given keys anywhere in the file
+    private static void collectStrings(JsonElement element, Set<String> keys, Set<String> values) {
+        if (element.isJsonObject()) {
+            for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+                JsonElement value = entry.getValue();
+                if (keys.contains(entry.getKey()) && value.isJsonPrimitive()) values.add(value.getAsString());
+                else collectStrings(value, keys, values);
+            }
+        } else if (element.isJsonArray()) {
+            element.getAsJsonArray().forEach(value -> collectStrings(value, keys, values));
         }
     }
 

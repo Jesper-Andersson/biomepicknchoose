@@ -1,7 +1,7 @@
 # Biome Pick'n'Choose [![Publish](https://github.com/Jesper-Andersson/biomepicknchoose/actions/workflows/publish.yml/badge.svg?branch=master)](https://github.com/Jesper-Andersson/biomepicknchoose/actions/workflows/publish.yml)
 
 Available on [Modrinth](https://modrinth.com/mod/biome-picknchoose) and [CurseForge](https://www.curseforge.com/minecraft/mc-mods/biome-picknchoose).
-Turn individual overworld biomes on and off, from vanilla and other mods.
+Turn individual biomes on and off in the overworld, the Nether, the End and dimensions added by mods or datapacks, from vanilla and other mods.
 
 Requires Minecraft 1.21.11 and either NeoForge 21.11+ or Fabric with Fabric API.
 
@@ -10,13 +10,18 @@ Requires Minecraft 1.21.11 and either NeoForge 21.11+ or Fabric with Fabric API.
 
 ## Features
 
-- **Biome toggles.** Turn any overworld biome on or off, including biomes added by other mods. A disabled biome is replaced by the **nearest enabled biome by climate**, so terrain still blends naturally. Only the overworld is affected.
+- **Biome toggles.** Turn any biome on or off, including biomes added by other mods, in the overworld, the Nether, the End and dimensions added by mods or datapacks. A disabled biome is turned off in every dimension that places it.
+  - In the overworld, the Nether and other dimensions that place biomes by climate (multi-noise), a disabled biome is replaced by the **nearest enabled biome by climate**, so terrain still blends naturally.
+  - In the End, a disabled biome is replaced by the enabled outer End biome (highlands, midlands, barrens or small islands) that is nearest by erosion, the noise vanilla picks them by.
+  - Dimensions with a biome source of their own (like Twilight Forest's) or a single fixed biome aren't affected. The log warns when such a dimension could place a disabled biome.
 - **Applies to new chunks.** Changes take effect after `/reload` or on the next world load, and only affect chunks generated after that. Chunks that already exist are not changed.
 - **In-game config menu.** Open it from Mods → Biome Pick'n'Choose → Config. On Fabric, this needs [Mod Menu](https://modrinth.com/mod/modmenu).
-  - One tab per mod, with Minecraft first.
+  - A dimension switch (Overworld, Nether, End, and dimensions from mods and datapacks), and one tab per mod in each, with Minecraft first. Dimensions from datapacks show up after you've loaded a world with them once.
+  - A search box that filters the biomes by name or id.
   - A green On / red Off toggle per biome. Hovering a toggle shows the biome id.
-  - Cave biomes (like lush caves and the deep dark) have gray names, so they stand out from surface biomes.
-  - Enable all / Disable all buttons for each tab.
+  - Cave biomes (like lush caves and the deep dark) have gray names, and ocean and river biomes blue names, so they stand out from other biomes.
+  - Biomes that the last loaded world never places have dark gray, italic names, since turning them off changes nothing.
+  - Enable all / Disable all buttons for each tab. With a search, they only change the biomes shown.
   - A sort button: A-Z, On first, or Off first.
   - A side panel that previews the hovered biome (on wide screens).
   - Done saves; Cancel discards.
@@ -28,7 +33,7 @@ Requires Minecraft 1.21.11 and either NeoForge 21.11+ or Fabric with Fabric API.
   - Presets keep entries for mods that aren't installed. When loading, only biomes that are known now are applied.
   - Presets use the same format as the config, so a preset file can be copied over `config/biomepicknchoose.json`, on either loader, client or server.
 - **Biome preview pictures.** These are client commands for singleplayer only:
-  - `/biomepick_preview capture [namespace]` photographs each biome. It finds a spot, teleports there in spectator mode, waits for chunks to load, and takes a screenshot without the HUD. Progress and time left show while it runs. Cave biomes are photographed from inside a cave room, with night vision.
+  - `/biomepick_preview capture [namespace]` photographs each biome. It finds a spot, teleports there in spectator mode, waits for chunks to load, and takes a screenshot without the HUD. Progress and time left show while it runs. It goes through the overworld, the Nether, the End, then other dimensions. Cave biomes and Nether biomes are photographed from inside a cave room, with night vision.
   - `/biomepick_preview capture_missing [namespace]` only captures biomes that don't have a picture yet.
   - `/biomepick_preview cancel` stops a capture.
   - Pictures are saved to `config/biomepicknchoose/biome_previews/<namespace>/<biome>.png`. Each one can be removed from the menu ("Remove picture").
@@ -63,7 +68,7 @@ Other files under `config/`:
 
 | Path                                 | Contents                                                                                |
 |--------------------------------------|-----------------------------------------------------------------------------------------|
-| `biomepicknchoose-known-biomes.json` | Cache of every overworld biome seen, and which are cave biomes, so the menu can list modded biomes outside a world |
+| `biomepicknchoose-known-biomes.json` | Cache of the biomes each dimension of the last loaded world can place, and which are cave and water biomes, so the menu can list modded biomes outside a world |
 | `biomepicknchoose/presets/`          | Saved presets (JSON)                                                                    |
 | `biomepicknchoose/biome_previews/`   | Captured preview pictures                                                               |
 

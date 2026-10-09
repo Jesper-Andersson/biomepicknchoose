@@ -1,5 +1,6 @@
 package com.github.Jesper_Andersson.biomepicknchoose.client.preview;
 
+import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeDimension;
 import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeToggles;
 import com.github.Jesper_Andersson.biomepicknchoose.common.CaveBiomes;
 import com.mojang.blaze3d.platform.NativeImage;
@@ -25,6 +26,7 @@ import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.ServerLevelData;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -34,8 +36,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -45,8 +50,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Photographs overworld biomes one at a time: locate a spot on a background thread, teleport there in spectator mode, wait
- * for the chunks to render, then screenshot without the HUD. Singleplayer only, since it drives the integrated server.
+ * Photographs overworld, Nether and End biomes one at a time: locate a spot on a background thread, teleport there in
+ * spectator mode, wait for the chunks to render, then screenshot without the HUD. Cave biomes and Nether biomes are
+ * photographed from inside a cave room. Singleplayer only, since it drives the integrated server.
  */
 public final class BiomePreviewCapture {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -63,6 +69,9 @@ public final class BiomePreviewCapture {
     // How far a cave camera looks for open space in each direction
     private static final int CAVE_VIEW_DISTANCE = 32;
     private static final float CAVE_PITCH = 10;
+    // How far below a cave camera, and below the space it looks into, there must be solid ground
+    private static final int CAMERA_GROUND_DEPTH = 6;
+    private static final int VIEW_GROUND_DEPTH = 12;
 
     @Nullable
     private static BiomePreviewCapture active;
@@ -81,6 +90,9 @@ public final class BiomePreviewCapture {
         }
     }
 
+    /** A biome to photograph, the dimension to look for it in, and whether to look underground. */
+    private record Target(Holder<Biome> biome, BiomeDimension dimension, boolean cave) {}
+
     private record Saved(ResourceKey<Level> dimension, double x, double y, double z, float yaw, float pitch,
                          GameType gameMode, boolean daylight, boolean weatherCycle, long dayTime,
                          int clearTime, int rainTime, boolean raining, boolean thundering,
@@ -89,8 +101,7 @@ public final class BiomePreviewCapture {
     private final Minecraft minecraft;
     private final MinecraftServer server;
     private final UUID player;
-    private final List<Holder<Biome>> biomes;
-    private final Set<Identifier> caves;
+    private final List<Target> targets;
     private final boolean hideGui;
     private final boolean pauseOnLostFocus;
     private final int renderDistance;
@@ -101,9 +112,10 @@ public final class BiomePreviewCapture {
                 thread.setDaemon(true);
                 return thread;
             });
-    private final AtomicInteger scanProgress = new AtomicInteger();
-    private CompletableFuture<BiomeScan> scan;
-    // Indexed like biomes, null for disabled biomes
+    // One scan per dimension with biomes to photograph
+    private final Map<BiomeDimension, AtomicInteger> scanProgress = new HashMap<>();
+    private final Map<BiomeDimension, CompletableFuture<BiomeScan>> scans = new HashMap<>();
+    // Indexed like targets, null for disabled biomes
     private final List<CompletableFuture<BiomeSpotFinder.Result>> searches = new ArrayList<>();
     private final List<Identifier> captured = new ArrayList<>();
     private final List<Component> skipped = new ArrayList<>();
@@ -134,12 +146,11 @@ public final class BiomePreviewCapture {
     private WaitStatus waitStatus;
     private int ticks;
 
-    private BiomePreviewCapture(Minecraft minecraft, MinecraftServer server, List<Holder<Biome>> biomes) {
+    private BiomePreviewCapture(Minecraft minecraft, MinecraftServer server, List<Target> targets) {
         this.minecraft = minecraft;
         this.server = server;
         this.player = minecraft.player.getUUID();
-        this.biomes = biomes;
-        this.caves = CaveBiomes.fromServer(server);
+        this.targets = targets;
         this.hideGui = minecraft.options.hideGui;
         this.pauseOnLostFocus = minecraft.options.pauseOnLostFocus;
         this.renderDistance = minecraft.options.renderDistance().get();
@@ -153,34 +164,39 @@ public final class BiomePreviewCapture {
         if (server == null || minecraft.player == null) return Component.translatable("biomepicknchoose.command.preview.singleplayer_only");
         if (active != null) return Component.translatable("biomepicknchoose.command.preview.running");
 
-        // The first filter keeps only biomes with a key, so the later get() calls can't fail
-        //noinspection OptionalGetWithoutIsPresent
-        List<Holder<Biome>> biomes = server.overworld().getChunkSource().getGenerator().getBiomeSource().possibleBiomes().stream()
-                .filter(biome -> biome.unwrapKey().isPresent())
-                .filter(biome -> namespace == null || biome.unwrapKey().get().identifier().getNamespace().equals(namespace))
-                .filter(biome -> !missingOnly || !BiomePreviews.hasPicture(biome.unwrapKey().get().identifier()))
-                .sorted(Comparator.comparing(biome -> biome.unwrapKey().get().identifier()))
-                .toList();
-        if (biomes.isEmpty()) {
+        // Each dimension in turn, a biome placed in several only in the first
+        Set<Identifier> caves = CaveBiomes.fromServer(server);
+        Set<Identifier> seen = new HashSet<>();
+        List<Target> targets = new ArrayList<>();
+        for (BiomeDimension dimension : BiomeToggles.serverDimensions(server)) {
+            ServerLevel level = server.getLevel(dimension.level());
+            if (level == null) continue;
+            // The first filter keeps only biomes with a key, so the later get() calls can't fail
+            //noinspection OptionalGetWithoutIsPresent
+            level.getChunkSource().getGenerator().getBiomeSource().possibleBiomes().stream()
+                    .filter(biome -> biome.unwrapKey().isPresent())
+                    .filter(biome -> namespace == null || biome.unwrapKey().get().identifier().getNamespace().equals(namespace))
+                    .filter(biome -> !missingOnly || !BiomePreviews.hasPicture(biome.unwrapKey().get().identifier()))
+                    .sorted(Comparator.comparing(biome -> biome.unwrapKey().get().identifier()))
+                    .filter(biome -> seen.add(biome.unwrapKey().get().identifier()))
+                    .forEach(biome -> targets.add(new Target(biome, dimension,
+                            dimension.equals(BiomeDimension.NETHER) || caves.contains(biome.unwrapKey().get().identifier()))));
+        }
+        if (targets.isEmpty()) {
             return Component.translatable(missingOnly ? "biomepicknchoose.command.preview.none_missing" : "biomepicknchoose.command.preview.none");
         }
 
-        BiomePreviewCapture capture = new BiomePreviewCapture(minecraft, server, biomes);
+        BiomePreviewCapture capture = new BiomePreviewCapture(minecraft, server, targets);
         capture.runStart = Util.getMillis();
         capture.setStep(Step.PREPARE);
         capture.prepare = server.submit(capture::prepareServer);
-        // Scan the biomes around spawn once, then search every spot from it up front so later spots are ready while
-        // earlier chunks load
-        ServerLevel overworld = server.overworld();
-        long scanStart = Util.getMillis();
-        capture.scan = BiomeScan.run(overworld, capture.locator, 
-                // Rows finish on several threads, so a lower percentage can arrive after a higher one
-                percent -> capture.scanProgress.accumulateAndGet(percent, Math::max));
-        capture.scan.thenRun(() -> LOGGER.info("Biome scan: {} columns in {}", BiomeScan.columns(),
-                formatDuration(Util.getMillis() - scanStart)));
-        for (Holder<Biome> biome : biomes) {
-            capture.searches.add(BiomeToggles.isDisabled(biome) ? null
-                    : capture.scan.thenApplyAsync(scan -> BiomeSpotFinder.find(overworld, biome, capture.isCave(biome), scan), capture.locator));
+        // Scan the biomes around spawn once per dimension, then search every spot from it up front so later spots are
+        // ready while earlier chunks load
+        for (Target target : targets) {
+            ServerLevel level = server.getLevel(target.dimension().level());
+            CompletableFuture<BiomeScan> scan = capture.scans.computeIfAbsent(target.dimension(), dimension -> capture.startScan(level, dimension));
+            capture.searches.add(BiomeToggles.isDisabled(target.biome()) ? null
+                    : scan.thenApplyAsync(done -> BiomeSpotFinder.find(level, target.biome(), target.cave(), done), capture.locator));
         }
         // Fewer chunks to generate and render per spot; the integrated server follows the client's view distance
         if (capture.renderDistance > CAPTURE_RENDER_DISTANCE) minecraft.options.renderDistance().set(CAPTURE_RENDER_DISTANCE);
@@ -188,6 +204,18 @@ public final class BiomePreviewCapture {
         minecraft.options.pauseOnLostFocus = false;
         active = capture;
         return null;
+    }
+
+    private CompletableFuture<BiomeScan> startScan(ServerLevel level, BiomeDimension dimension) {
+        AtomicInteger progress = new AtomicInteger();
+        scanProgress.put(dimension, progress);
+        long scanStart = Util.getMillis();
+        CompletableFuture<BiomeScan> scan = BiomeScan.run(level, dimension, locator,
+                // Rows finish on several threads, so a lower percentage can arrive after a higher one
+                percent -> progress.accumulateAndGet(percent, Math::max));
+        scan.thenRun(() -> LOGGER.info("Biome scan of the {}: {} columns in {}", dimension.key(), BiomeScan.columns(),
+                formatDuration(Util.getMillis() - scanStart)));
+        return scan;
     }
 
     static boolean cancel() {
@@ -266,9 +294,10 @@ public final class BiomePreviewCapture {
                 // A cave spot is only somewhere inside the biome, often in solid rock. Once its chunks exist on the
                 // server, look for a room in them to take the picture from
                 if (spot.cave() && caveRoom == null && (status.kind() == WaitKind.RENDER || status.ready())) {
-                    ResourceKey<Biome> key = biomes.get(index).unwrapKey().orElseThrow();
+                    ResourceKey<Biome> key = current().biome().unwrapKey().orElseThrow();
+                    ServerLevel level = currentLevel();
                     BiomeSpotFinder.Spot around = spot;
-                    caveRoom = server.submit(() -> findCaveRoom(around, key));
+                    caveRoom = server.submit(() -> findCaveRoom(level, around, key));
                     setStep(Step.CAVE);
                 } else if (settled >= SETTLE_TICKS) {
                     shoot();
@@ -300,20 +329,25 @@ public final class BiomePreviewCapture {
     }
 
     private void moveTo(BiomeSpotFinder.Spot target) {
-        server.execute(() -> teleportServer(target));
+        ServerLevel level = currentLevel();
+        server.execute(() -> teleportServer(level, target));
         waited = 0;
         settled = 0;
         waitStatus = null;
         setStep(Step.WAIT);
     }
 
-    private boolean isCave(Holder<Biome> biome) {
-        return biome.unwrapKey().map(key -> caves.contains(key.identifier())).orElse(false);
+    private Target current() {
+        return targets.get(index);
+    }
+
+    private ServerLevel currentLevel() {
+        return server.getLevel(current().dimension().level());
     }
 
     private void next() {
         index++;
-        if (index >= biomes.size()) {
+        if (index >= targets.size()) {
             finish();
             return;
         }
@@ -343,7 +377,7 @@ public final class BiomePreviewCapture {
     private WaitStatus waitStatus() {
         var localPlayer = minecraft.player;
         if (minecraft.screen != null) return new WaitStatus(WaitKind.MENU, 0, 0);
-        if (localPlayer == null || minecraft.level == null || minecraft.level.dimension() != Level.OVERWORLD
+        if (localPlayer == null || minecraft.level == null || minecraft.level.dimension() != current().dimension().level()
                 || localPlayer.distanceToSqr(spot.x(), spot.y(), spot.z()) > 4) {
             return new WaitStatus(WaitKind.TELEPORT, 0, 0);
         }
@@ -373,16 +407,16 @@ public final class BiomePreviewCapture {
 
     private void showStatus() {
         long now = Util.getMillis();
-        String biome = index >= 0 && index < biomes.size() ? currentId().toString() : "-";
-        message(Component.translatable("biomepicknchoose.command.preview.status", Math.max(index + 1, 0), biomes.size(), biome,
+        String biome = index >= 0 && index < targets.size() ? currentId().toString() : "-";
+        message(Component.translatable("biomepicknchoose.command.preview.status", Math.max(index + 1, 0), targets.size(), biome,
                 stepText(), formatDuration(now - phaseStart), eta(now)), true);
     }
 
     private Component stepText() {
         return switch (step) {
             case PREPARE -> Component.translatable("biomepicknchoose.command.preview.step.prepare");
-            case LOCATE -> scan.isDone() ? Component.translatable("biomepicknchoose.command.preview.step.locate")
-                    : Component.translatable("biomepicknchoose.command.preview.step.scan", scanProgress.get());
+            case LOCATE -> scans.get(current().dimension()).isDone() ? Component.translatable("biomepicknchoose.command.preview.step.locate")
+                    : Component.translatable("biomepicknchoose.command.preview.step.scan", scanProgress.get(current().dimension()).get());
             case CAPTURE -> Component.translatable("biomepicknchoose.command.preview.step.capture");
             case CAVE -> Component.translatable("biomepicknchoose.command.preview.step.cave");
             case WAIT -> {
@@ -458,7 +492,7 @@ public final class BiomePreviewCapture {
         Component folder = Component.literal(dir.toString()).withStyle(style -> style
                 .withUnderlined(true)
                 .withClickEvent(new ClickEvent.OpenFile(dir.toAbsolutePath().toString())));
-        message(Component.translatable("biomepicknchoose.command.preview.done", captured.size(), biomes.size(), folder,
+        message(Component.translatable("biomepicknchoose.command.preview.done", captured.size(), targets.size(), folder,
                 formatDuration(Util.getMillis() - runStart)));
         if (!skipped.isEmpty()) {
             message(Component.translatable("biomepicknchoose.command.preview.skipped",
@@ -491,7 +525,7 @@ public final class BiomePreviewCapture {
     }
 
     private Identifier currentId() {
-        return biomes.get(index).unwrapKey().orElseThrow().identifier();
+        return current().biome().unwrapKey().orElseThrow().identifier();
     }
 
     private void message(Component component) {
@@ -524,12 +558,13 @@ public final class BiomePreviewCapture {
         return state;
     }
 
-    private void teleportServer(BiomeSpotFinder.Spot target) {
+    private void teleportServer(ServerLevel level, BiomeSpotFinder.Spot target) {
         ServerPlayer serverPlayer = server.getPlayerList().getPlayer(player);
         if (serverPlayer == null) return;
+        // The time of day and the weather are the overworld's, also when the picture is taken in another dimension
         ServerLevel overworld = server.overworld();
         serverPlayer.setGameMode(GameType.SPECTATOR);
-        serverPlayer.teleportTo(overworld, target.x(), target.y(), target.z(), Set.of(), target.yaw(), target.pitch(), true);
+        serverPlayer.teleportTo(level, target.x(), target.y(), target.z(), Set.of(), target.yaw(), target.pitch(), true);
         // Caves are dark, even at noon. Hidden, so it doesn't show in the picture
         serverPlayer.removeEffect(MobEffects.NIGHT_VISION);
         if (target.cave()) {
@@ -560,8 +595,7 @@ public final class BiomePreviewCapture {
      * longest view that stays in the biome. Null if there is no open space in the biome there.
      */
     @Nullable
-    private BiomeSpotFinder.Spot findCaveRoom(BiomeSpotFinder.Spot around, ResourceKey<Biome> key) {
-        ServerLevel overworld = server.overworld();
+    private BiomeSpotFinder.Spot findCaveRoom(ServerLevel level, BiomeSpotFinder.Spot around, ResourceKey<Biome> key) {
         BlockPos center = BlockPos.containing(around.x(), around.y(), around.z());
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         BlockPos best = null;
@@ -571,13 +605,15 @@ public final class BiomePreviewCapture {
             for (int dx = -CAVE_SEARCH_RADIUS; dx <= CAVE_SEARCH_RADIUS; dx += CAVE_SEARCH_STEP) {
                 for (int dz = -CAVE_SEARCH_RADIUS; dz <= CAVE_SEARCH_RADIUS; dz += CAVE_SEARCH_STEP) {
                     pos.setWithOffset(center, dx, dy, dz);
-                    if (!overworld.isLoaded(pos) || !overworld.getBlockState(pos).isAir() || !overworld.getBiome(pos).is(key)) continue;
+                    if (!level.isLoaded(pos) || !level.getBlockState(pos).isAir() || !level.getBiome(pos).is(key)) continue;
+                    // Close above solid ground, not hanging over a lava or water sea
+                    if (!hasGround(level, pos, CAMERA_GROUND_DEPTH)) continue;
                     // The longest view, plus a little for the others, so a room beats the end of a long tunnel
                     int total = 0;
                     int longest = -1;
                     float yaw = 0;
                     for (int i = 0; i < 8; i++) {
-                        int view = caveView(overworld, pos, i * 45, key);
+                        int view = caveView(level, pos, i * 45, key);
                         total += view;
                         if (view > longest) {
                             longest = view;
@@ -597,7 +633,8 @@ public final class BiomePreviewCapture {
         return new BiomeSpotFinder.Spot(best.getX() + 0.5, best.getY() + 0.5, best.getZ() + 0.5, bestYaw, CAVE_PITCH, true);
     }
 
-    // Blocks of open space in the biome before something solid, looking along the yaw
+    // Blocks of open space in the biome before something solid, looking along the yaw. Only counts open space with
+    // ground under it, so a view out over the Nether's lava sea, or into a ravine, scores low
     private static int caveView(ServerLevel level, BlockPos from, float yaw, ResourceKey<Biome> key) {
         double dx = -Mth.sin(yaw * Mth.DEG_TO_RAD);
         double dz = Mth.cos(yaw * Mth.DEG_TO_RAD);
@@ -606,8 +643,21 @@ public final class BiomePreviewCapture {
         for (int d = 1; d <= CAVE_VIEW_DISTANCE; d++) {
             pos.set(from.getX() + Mth.floor(dx * d + 0.5), from.getY(), from.getZ() + Mth.floor(dz * d + 0.5));
             if (!level.isLoaded(pos) || level.getBlockState(pos).blocksMotion()) break;
-            if (level.getBiome(pos).is(key)) view++;
+            if (level.getBiome(pos).is(key) && hasGround(level, pos, VIEW_GROUND_DEPTH)) view++;
         }
         return view;
+    }
+
+    // Whether the first block below that isn't air is solid ground within depth blocks, not a fluid like lava
+    private static boolean hasGround(ServerLevel level, BlockPos from, int depth) {
+        BlockPos.MutableBlockPos pos = from.mutable();
+        for (int d = 1; d <= depth; d++) {
+            pos.move(0, -1, 0);
+            if (!level.isLoaded(pos)) return false;
+            BlockState state = level.getBlockState(pos);
+            if (state.isAir()) continue;
+            return state.getFluidState().isEmpty();
+        }
+        return false;
     }
 }
