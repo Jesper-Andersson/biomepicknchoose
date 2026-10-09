@@ -1,8 +1,10 @@
 name: Publish
 
+# One branch per Minecraft version, named after it (1.21.1, 1.21.11, ...). Each releases on its own, with the Minecraft
+# version in the tag and the Modrinth version, so two branches can both release 1.0.4
 on:
   push:
-    branches: [master]
+    branches: ['[0-9]*']
     # Commits that don't change the mod itself don't make a release
     paths-ignore:
       - '**.md'
@@ -10,10 +12,10 @@ on:
       - '.gitignore'
   workflow_dispatch:
 
-# Two runs at once would both bump to the same version. Later pushes wait, and only the newest waiting one runs,
-# since it checks out the latest master anyway
+# Two runs at once on a branch would both bump to the same version. Later pushes wait, and only the newest waiting one
+# runs, since it checks out the latest commit anyway. Different branches don't wait for each other
 concurrency:
-  group: publish
+  group: publish-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -28,15 +30,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: master
+          ref: ${{ github.ref_name }}
           fetch-depth: 0   # full history and tags, for the changelog
 
-      # Commit messages since the last release, leaving out merges, release commits and commits that only touch the
-      # files the push trigger ignores
+      - name: Minecraft version
+        id: minecraft
+        run: echo "version=$(grep '^minecraft_version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      # Commit messages since the last release for this Minecraft version, leaving out merges, release commits and commits
+      # that only touch the files the push trigger ignores. Falls back to any earlier tag, from before the branches split
       - name: Changelog
         id: changelog
+        env:
+          MINECRAFT: ${{ steps.minecraft.outputs.version }}
         run: |
-          previous=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          previous=$(git describe --tags --abbrev=0 --match "v*+$MINECRAFT" 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || true)
           changes=$(git log --no-merges --format='- %s' ${previous:+$previous..}HEAD -- . ':!*.md' ':!.github' ':!.gitignore' | grep -v '^- Release ' || true)
           [ -n "$changes" ] || changes="- Maintenance release"
           {
@@ -55,6 +63,7 @@ jobs:
           next="$major.$minor.$((patch + 1))"
           sed -i "s/^version=.*/version=$next/" gradle.properties
           echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "tag=v$next+${{ steps.minecraft.outputs.version }}" >> "$GITHUB_OUTPUT"
           echo "Bumped $current -> $next"
 
       - name: Set up Java
@@ -77,15 +86,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
           git commit -am "Release ${{ steps.version.outputs.version }}"
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin master "v${{ steps.version.outputs.version }}"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "HEAD:${{ github.ref_name }}" "${{ steps.version.outputs.tag }}"
 
       - name: Publish NeoForge to Modrinth and CurseForge
         id: publish-neoforge
         uses: Kira-NT/mc-publish@v3.3.1
         with:
-          version: ${{ steps.version.outputs.version }}-neoforge
-          name: Biome Pick'n'Choose ${{ steps.version.outputs.version }} (NeoForge)
+          version: ${{ steps.version.outputs.version }}+${{ steps.minecraft.outputs.version }}-neoforge
+          name: Biome Pick'n'Choose ${{ steps.version.outputs.version }} for ${{ steps.minecraft.outputs.version }} (NeoForge)
           changelog: ${{ steps.changelog.outputs.text }}
           loaders: neoforge
 
@@ -101,8 +110,8 @@ jobs:
         id: publish-fabric
         uses: Kira-NT/mc-publish@v3.3.1
         with:
-          version: ${{ steps.version.outputs.version }}-fabric
-          name: Biome Pick'n'Choose ${{ steps.version.outputs.version }} (Fabric)
+          version: ${{ steps.version.outputs.version }}+${{ steps.minecraft.outputs.version }}-fabric
+          name: Biome Pick'n'Choose ${{ steps.version.outputs.version }} for ${{ steps.minecraft.outputs.version }} (Fabric)
           changelog: ${{ steps.changelog.outputs.text }}
           loaders: fabric
 
@@ -119,6 +128,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
+          MINECRAFT: ${{ steps.minecraft.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          # Only the default branch's releases are marked as GitHub's latest release
+          LATEST: ${{ github.ref_name == github.event.repository.default_branch }}
           CHANGES: ${{ steps.changelog.outputs.text }}
           MODRINTH_NEOFORGE: ${{ steps.publish-neoforge.outputs.modrinth-version }}
           CURSEFORGE_NEOFORGE: ${{ steps.publish-neoforge.outputs.curseforge-version }}
@@ -142,7 +155,8 @@ jobs:
             echo "- NeoForge: [Modrinth](https://modrinth.com/mod/biome-picknchoose/version/$MODRINTH_NEOFORGE), [CurseForge](https://www.curseforge.com/minecraft/mc-mods/biome-picknchoose/files/$CURSEFORGE_NEOFORGE)"
             echo "- Fabric: [Modrinth](https://modrinth.com/mod/biome-picknchoose/version/$MODRINTH_FABRIC), [CurseForge](https://www.curseforge.com/minecraft/mc-mods/biome-picknchoose/files/$CURSEFORGE_FABRIC)"
           } > release-notes.md
-          gh release create "v$VERSION" "${jars[@]}" \
-            --title "Biome Pick'n'Choose $VERSION" \
+          gh release create "$TAG" "${jars[@]}" \
+            --title "Biome Pick'n'Choose $VERSION for $MINECRAFT" \
             --notes-file release-notes.md \
+            --latest="$LATEST" \
             --verify-tag
