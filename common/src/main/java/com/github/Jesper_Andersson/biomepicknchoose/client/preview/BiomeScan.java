@@ -1,5 +1,6 @@
 package com.github.Jesper_Andersson.biomepicknchoose.client.preview;
 
+import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeDimension;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
@@ -20,30 +21,51 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntConsumer;
 
 /**
- * A coarse map of the biomes around spawn, sampled once per run so each biome's spot search can start from known patches
- * instead of searching outward from spawn on its own. Only reads the biome source, so it is as thread safe as
- * {@link BiomeSpotFinder}.
+ * A coarse map of the biomes around spawn in one dimension, sampled once per run so each biome's spot search can start
+ * from known patches instead of searching outward from spawn on its own. The Nether and the End are scanned around
+ * their origin. Only reads the biome source, so it is as thread safe as {@link BiomeSpotFinder}.
  */
 final class BiomeScan {
     private static final int SCAN_RADIUS = 4096;
     private static final int SCAN_STEP = 32;
     private static final int SIZE = SCAN_RADIUS / SCAN_STEP * 2 + 1;
-    // Block heights above sea level to sample at
-    private static final int[] HEIGHTS = {0, 32, 64, 112};
     private static final int ROWS_PER_TASK = 8;
 
     record Candidate(BlockPos pos, int neighbours, double distance) {}
 
+    /**
+     * The block heights relative to sea level to sample at, lowest first. The first undergroundCount of them are
+     * underground, where cave biomes are looked for.
+     */
+    private record Layers(int[] heights, int undergroundCount) {
+        // Below sea level for cave biomes, down to the deep dark, and the surface up to mountain tops
+        static final Layers OVERWORLD = new Layers(new int[]{-112, -80, -48, -16, 0, 32, 64, 112}, 4);
+        // Above the lava sea at 32 and below the bedrock roof at 128, all of it underground
+        static final Layers NETHER = new Layers(new int[]{8, 24, 40, 56, 72}, 5);
+        // The outer End biomes don't change with height
+        static final Layers END = new Layers(new int[]{64}, 0);
+
+        static Layers of(BiomeDimension dimension) {
+            if (dimension.equals(BiomeDimension.NETHER)) return NETHER;
+            if (dimension.equals(BiomeDimension.END)) return END;
+            // Other dimensions are scanned like the overworld, since most of them have a surface
+            return OVERWORLD;
+        }
+    }
+
     private final BlockPos center;
     private final int seaLevel;
+    private final Layers layers;
     private final List<Holder<Biome>> biomes;
     private final Map<Holder<Biome>, Short> indices = new HashMap<>();
     // One grid per height, row major in z then x, -1 for biomes outside the source's possible biomes
-    private final short[][] grid = new short[HEIGHTS.length][SIZE * SIZE];
+    private final short[][] grid;
 
-    private BiomeScan(ServerLevel level) {
-        this.center = level.getSharedSpawnPos();
+    private BiomeScan(ServerLevel level, BiomeDimension dimension) {
+        this.center = center(level, dimension);
         this.seaLevel = level.getChunkSource().getGenerator().getSeaLevel();
+        this.layers = Layers.of(dimension);
+        this.grid = new short[layers.heights().length][SIZE * SIZE];
         this.biomes = List.copyOf(level.getChunkSource().getGenerator().getBiomeSource().possibleBiomes());
         for (int i = 0; i < biomes.size(); i++) indices.put(biomes.get(i), (short) i);
     }
@@ -52,9 +74,18 @@ final class BiomeScan {
         return SIZE * SIZE;
     }
 
+    BlockPos center() {
+        return center;
+    }
+
+    /** Where the search starts: spawn in the overworld, the origin elsewhere. */
+    static BlockPos center(ServerLevel level, BiomeDimension dimension) {
+        return dimension.equals(BiomeDimension.OVERWORLD) ? level.getSharedSpawnPos() : BlockPos.ZERO;
+    }
+
     /** Scans in row batches spread over the pool; progress gets the percentage of rows done. */
-    static CompletableFuture<BiomeScan> run(ServerLevel level, ExecutorService pool, IntConsumer progress) {
-        BiomeScan scan = new BiomeScan(level);
+    static CompletableFuture<BiomeScan> run(ServerLevel level, BiomeDimension dimension, ExecutorService pool, IntConsumer progress) {
+        BiomeScan scan = new BiomeScan(level, dimension);
         BiomeSource source = level.getChunkSource().getGenerator().getBiomeSource();
         Climate.Sampler sampler = level.getChunkSource().randomState().sampler();
         AtomicInteger rowsDone = new AtomicInteger();
@@ -74,54 +105,75 @@ final class BiomeScan {
     }
 
     private void scanRow(BiomeSource source, Climate.Sampler sampler, int row) {
-        int qz = QuartPos.fromBlock(center.getZ() - SCAN_RADIUS + row * SCAN_STEP);
-        for (int h = 0; h < HEIGHTS.length; h++) {
-            int qy = QuartPos.fromBlock(seaLevel + HEIGHTS[h]);
-            for (int col = 0; col < SIZE; col++) {
-                int qx = QuartPos.fromBlock(center.getX() - SCAN_RADIUS + col * SCAN_STEP);
-                grid[h][row * SIZE + col] = indices.getOrDefault(source.getNoiseBiome(qx, qy, qz, sampler), (short) -1);
+        int quartZ = QuartPos.fromBlock(blockZ(row));
+        for (int layer = 0; layer < layers.heights().length; layer++) {
+            int quartY = QuartPos.fromBlock(seaLevel + layers.heights()[layer]);
+            for (int column = 0; column < SIZE; column++) {
+                int quartX = QuartPos.fromBlock(blockX(column));
+                grid[layer][row * SIZE + column] = indices.getOrDefault(source.getNoiseBiome(quartX, quartY, quartZ, sampler), (short) -1);
             }
         }
     }
 
-    /** Every column where the biome was seen, most surrounded first, then nearest to spawn. */
-    List<Candidate> candidates(ResourceKey<Biome> key) {
-        short target = -1;
-        for (int i = 0; i < biomes.size(); i++) {
-            if (biomes.get(i).is(key)) target = (short) i;
-        }
+    private int blockX(int column) {
+        return center.getX() - SCAN_RADIUS + column * SCAN_STEP;
+    }
+
+    private int blockZ(int row) {
+        return center.getZ() - SCAN_RADIUS + row * SCAN_STEP;
+    }
+
+    /**
+     * Every column where the biome was seen, most surrounded first, then nearest to spawn. Cave biomes, and every
+     * Nether biome, are looked for underground, other biomes at and above sea level.
+     */
+    List<Candidate> candidates(ResourceKey<Biome> key, boolean cave) {
         List<Candidate> candidates = new ArrayList<>();
+        short target = indexOf(key);
         if (target < 0) return candidates;
+        int firstLayer = cave ? 0 : layers.undergroundCount();
+        int endLayer = cave ? layers.undergroundCount() : layers.heights().length;
         for (int row = 0; row < SIZE; row++) {
-            for (int col = 0; col < SIZE; col++) {
+            for (int column = 0; column < SIZE; column++) {
                 // A column can match at several heights; keep the height where it is most surrounded
                 int bestNeighbours = -1;
                 int bestHeight = 0;
-                for (int h = 0; h < HEIGHTS.length; h++) {
-                    short[] layer = grid[h];
-                    if (layer[row * SIZE + col] != target) continue;
-                    int neighbours = 0;
-                    for (int dz = -1; dz <= 1; dz++) {
-                        for (int dx = -1; dx <= 1; dx++) {
-                            int r = row + dz;
-                            int c = col + dx;
-                            if ((dx != 0 || dz != 0) && r >= 0 && r < SIZE && c >= 0 && c < SIZE
-                                    && layer[r * SIZE + c] == target) neighbours++;
-                        }
-                    }
+                for (int layer = firstLayer; layer < endLayer; layer++) {
+                    if (grid[layer][row * SIZE + column] != target) continue;
+                    int neighbours = countNeighbours(grid[layer], row, column, target);
                     if (neighbours > bestNeighbours) {
                         bestNeighbours = neighbours;
-                        bestHeight = seaLevel + HEIGHTS[h];
+                        bestHeight = seaLevel + layers.heights()[layer];
                     }
                 }
                 if (bestNeighbours < 0) continue;
-                BlockPos pos = new BlockPos(center.getX() - SCAN_RADIUS + col * SCAN_STEP, bestHeight,
-                        center.getZ() - SCAN_RADIUS + row * SCAN_STEP);
+                BlockPos pos = new BlockPos(blockX(column), bestHeight, blockZ(row));
                 double distance = Math.sqrt(pos.distSqr(center.atY(bestHeight)));
                 candidates.add(new Candidate(pos, bestNeighbours, distance));
             }
         }
         candidates.sort(Comparator.comparingInt(Candidate::neighbours).reversed().thenComparingDouble(Candidate::distance));
         return candidates;
+    }
+
+    // The biome's index in the grid, or -1 if the source can't place it
+    private short indexOf(ResourceKey<Biome> key) {
+        for (int i = 0; i < biomes.size(); i++) {
+            if (biomes.get(i).is(key)) return (short) i;
+        }
+        return -1;
+    }
+
+    // How many of the 8 cells around the cell hold the target biome too
+    private static int countNeighbours(short[] layerGrid, int row, int column, short target) {
+        int neighbours = 0;
+        for (int neighbourRow = row - 1; neighbourRow <= row + 1; neighbourRow++) {
+            for (int neighbourColumn = column - 1; neighbourColumn <= column + 1; neighbourColumn++) {
+                boolean isCell = neighbourRow == row && neighbourColumn == column;
+                boolean inGrid = neighbourRow >= 0 && neighbourRow < SIZE && neighbourColumn >= 0 && neighbourColumn < SIZE;
+                if (!isCell && inGrid && layerGrid[neighbourRow * SIZE + neighbourColumn] == target) neighbours++;
+            }
+        }
+        return neighbours;
     }
 }
