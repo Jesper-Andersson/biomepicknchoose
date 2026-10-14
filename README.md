@@ -71,11 +71,11 @@ Modded biomes show up in the menu after a world has loaded once. To list yours e
 @SubscribeEvent
 static void enqueueIMC(InterModEnqueueEvent event) {
     InterModComms.sendTo("biomepicknchoose", "register_biomes", () -> List.of(
-            Identifier.fromNamespaceAndPath("mymod", "crystal_fields")));
+            ResourceLocation.fromNamespaceAndPath("mymod", "crystal_fields")));
 }
 ```
 
-The payload can be a `Collection` of `Identifier`, `ResourceKey` or `String`.
+The payload can be a `Collection` of `ResourceLocation`, `ResourceKey` or `String`.
 </details>
 
 <details>
