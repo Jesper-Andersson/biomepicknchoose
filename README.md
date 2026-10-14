@@ -94,4 +94,4 @@ The project follows the [MultiLoader Template](https://github.com/jaredlll08/Mul
 
 ## License
 
-CC0 1.0 Universal
+MIT, see [LICENSE](LICENSE).
