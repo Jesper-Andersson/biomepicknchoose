@@ -1,8 +1,9 @@
 package com.github.Jesper_Andersson.biomepicknchoose.client.gui;
 
 import com.github.Jesper_Andersson.biomepicknchoose.client.preview.BiomePreviews;
+import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeCatalog;
 import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeConfig;
-import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeToggles;
+import com.github.Jesper_Andersson.biomepicknchoose.common.BiomeDimension;
 import com.github.Jesper_Andersson.biomepicknchoose.platform.Services;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -11,6 +12,7 @@ import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.ContainerObjectSelectionList;
 import net.minecraft.client.gui.components.CycleButton;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.TabButton;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.components.events.GuiEventListener;
@@ -24,17 +26,18 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.locale.Language;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.FormattedCharSequence;
 import org.jetbrains.annotations.Nullable;
 
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -47,8 +50,14 @@ import java.util.function.Consumer;
 public final class BiomeToggleScreen extends Screen {
     private static final int FOOTER_HEIGHT = 56;
     private static final int TAB_HEADER_HEIGHT = 28;
+    // The dimension switch and search box, between the tab bar and the tabs
+    private static final int SEARCH_ROW_HEIGHT = 24;
+    private static final int DIMENSION_BUTTON_WIDTH = 110;
     private static final int ROW_WIDTH = 310;
     private static final int NARROW_ROW_WIDTH = 250;
+    // Space between widgets side by side, and room kept beside the list for its scroll bar
+    private static final int WIDGET_GAP = 5;
+    private static final int SCROLL_BAR_ROOM = 24;
     // Low enough for automatic GUI scale, which makes the screen 426 to 480 wide on common monitors
     private static final int PANEL_MIN_SCREEN_WIDTH = 400;
     // Rows narrower than this get a smaller thumbnail and toggle, to leave room for the name
@@ -63,7 +72,15 @@ public final class BiomeToggleScreen extends Screen {
     private static final int ROW_RIGHT_INSET = 4;
     private static final int PANEL_TEXT_HEIGHT = 26;
     private static final int PANEL_BUTTON_HEIGHT = 24;
-    private static final int HINT_COLOR = 0xA0A0A0;
+    // Text colours need an alpha channel, or the text is invisible
+    private static final int HINT_COLOR = 0xFFA0A0A0;
+    private static final int TEXT_COLOR = 0xFFFFFFFF;
+    // Cave biome names, so they stand out from surface biomes
+    private static final int CAVE_TEXT_COLOR = 0xFFAAAAAA;
+    // Ocean and river biome names
+    private static final int WATER_TEXT_COLOR = 0xFF6FA8FF;
+    // Names of biomes the last loaded world never places
+    private static final int UNUSED_TEXT_COLOR = 0xFF707070;
     // Thumbnails in the rows, half the size of the pictures BiomePreviews makes, so they are sharp at GUI scale 2
     private static final int THUMBNAIL_WIDTH = BiomePreviews.THUMBNAIL_WIDTH / 2;
     private static final int THUMBNAIL_HEIGHT = BiomePreviews.THUMBNAIL_HEIGHT / 2;
@@ -74,12 +91,17 @@ public final class BiomeToggleScreen extends Screen {
 
     private final Screen parent;
     private final Set<String> disabled;
-    private final Set<ResourceLocation> known;
+    private final BiomeCatalog catalog;
     private final Consumer<List<String>> onSave;
     // Editing the config of the server this client is connected to
     private final boolean remote;
     private final TabManager tabManager = new TabManager(this::addRenderableWidget, this::removeWidget);
     private TabNavigationBar tabNavigationBar;
+    private CycleButton<BiomeDimension> dimensionButton;
+    private EditBox searchBox;
+    // Kept when the widgets are rebuilt, like on switching dimension
+    private BiomeDimension dimension = BiomeDimension.OVERWORLD;
+    private String query = "";
     private Tab[] tabs = new Tab[0];
     private Button presetsButton;
     private Button doneButton;
@@ -101,41 +123,36 @@ public final class BiomeToggleScreen extends Screen {
 
     /** Edits this game's config. */
     public BiomeToggleScreen(Screen parent) {
-        this(parent, Component.translatable("biomepicknchoose.configuration.title"), BiomeToggles.knownBiomes(),
+        this(parent, Component.translatable("biomepicknchoose.configuration.title"), BiomeCatalog.local(),
                 BiomeConfig.disabledBiomes(), null, false);
     }
 
     /** Edits the server's config, from the biomes it sent. onSave sends the disabled biomes back. */
-    public static BiomeToggleScreen forServer(@Nullable Screen parent, Set<ResourceLocation> known, List<String> disabled, Consumer<List<String>> onSave) {
-        return new BiomeToggleScreen(parent, Component.translatable("biomepicknchoose.configuration.title.server"), known, disabled, onSave, true);
+    public static BiomeToggleScreen forServer(@Nullable Screen parent, BiomeCatalog catalog, List<String> disabled,
+                                              Consumer<List<String>> onSave) {
+        return new BiomeToggleScreen(parent, Component.translatable("biomepicknchoose.configuration.title.server"), catalog,
+                disabled, onSave, true);
     }
 
-    private BiomeToggleScreen(@Nullable Screen parent, Component title, Set<ResourceLocation> known, List<String> disabled,
+    private BiomeToggleScreen(@Nullable Screen parent, Component title, BiomeCatalog catalog, List<String> disabled,
                               @Nullable Consumer<List<String>> onSave, boolean remote) {
         super(title);
         this.parent = parent;
-        this.known = known;
+        this.catalog = catalog;
         this.disabled = new HashSet<>(disabled);
-        this.onSave = onSave != null ? onSave : biomes -> BiomeConfig.save(known, biomes);
+        this.onSave = onSave != null ? onSave : biomes -> BiomeConfig.save(catalog.allKnown(), biomes);
         this.remote = remote;
     }
 
     @Override
     protected void init() {
-        // The server sends its own biomes, so they are always complete
-        hasKnownBiomes = remote || Files.isRegularFile(BiomeToggles.knownBiomesFile());
-
-        Map<String, List<ResourceLocation>> byNamespace = new TreeMap<>(
-                Comparator.comparingInt(BiomeToggleScreen::namespaceOrder).thenComparing(Comparator.naturalOrder()));
-        for (ResourceLocation id : known) {
-            byNamespace.computeIfAbsent(id.getNamespace(), ns -> new ArrayList<>()).add(id);
-        }
-        tabs = byNamespace.entrySet().stream()
-                .map(entry -> new BiomeTab(tabTitle(entry.getKey()), entry.getValue()))
-                .toArray(Tab[]::new);
-
+        // Until a world was loaded in this game, the menu may miss biomes of other mods. The server's list is complete
+        hasKnownBiomes = remote || !catalog.generating().isEmpty();
+        tabs = createTabs();
         tabNavigationBar = TabNavigationBar.builder(tabManager, width).addTabs(tabs).build();
         addRenderableWidget(tabNavigationBar);
+        dimensionButton = addRenderableWidget(createDimensionButton());
+        searchBox = addRenderableWidget(createSearchBox());
         presetsButton = addRenderableWidget(Button.builder(Component.translatable("biomepicknchoose.configuration.presets"), button -> openPresets()).width(100).build());
         doneButton = addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, button -> save()).width(100).build());
         cancelButton = addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, button -> onClose()).width(100).build());
@@ -145,6 +162,43 @@ public final class BiomeToggleScreen extends Screen {
         tabNavigationBar.selectTab(tab, false);
         if (lastShownId != null && tabs.length > 0 && tabs[tab] instanceof BiomeTab biomeTab) biomeTab.list.show(lastShownId);
         repositionElements();
+    }
+
+    // One tab per mod, with the biomes it adds to the shown dimension
+    private Tab[] createTabs() {
+        Map<String, List<ResourceLocation>> byNamespace = new TreeMap<>(
+                Comparator.comparingInt(BiomeToggleScreen::namespaceOrder).thenComparing(Comparator.naturalOrder()));
+        for (ResourceLocation id : catalog.known().getOrDefault(dimension, Set.of())) {
+            byNamespace.computeIfAbsent(id.getNamespace(), namespace -> new ArrayList<>()).add(id);
+        }
+        return byNamespace.entrySet().stream()
+                .map(entry -> new BiomeTab(tabTitle(entry.getKey()), entry.getValue()))
+                .toArray(Tab[]::new);
+    }
+
+    private CycleButton<BiomeDimension> createDimensionButton() {
+        // Dimensions without any biome to list, like a mod dimension the scan found no biomes for, are left out
+        List<BiomeDimension> dimensions = catalog.known().entrySet().stream()
+                .filter(entry -> !entry.getValue().isEmpty())
+                .map(Map.Entry::getKey)
+                .toList();
+        if (!dimensions.contains(dimension)) dimension = BiomeDimension.OVERWORLD;
+        Component label = Component.translatable("biomepicknchoose.configuration.dimension");
+        return CycleButton.<BiomeDimension>builder(BiomeDimension::displayName)
+                .withValues(dimensions)
+                .withInitialValue(dimension)
+                .displayOnlyValue()
+                .withTooltip(value -> Tooltip.create(label))
+                .create(0, 0, DIMENSION_BUTTON_WIDTH, 20, label, (button, value) -> switchDimension(value));
+    }
+
+    private EditBox createSearchBox() {
+        Component hint = Component.translatable("biomepicknchoose.configuration.search");
+        EditBox box = new EditBox(font, 0, 0, 200, 20, hint);
+        box.setHint(hint.copy().withStyle(ChatFormatting.DARK_GRAY));
+        box.setValue(query);
+        box.setResponder(this::search);
+        return box;
     }
 
     @Override
@@ -161,10 +215,22 @@ public final class BiomeToggleScreen extends Screen {
             int previewWidth = Math.min(half - 30, (areaHeight - 8 - PANEL_TEXT_HEIGHT - PANEL_BUTTON_HEIGHT) * 16 / 9);
             if (previewWidth > 0) preview = new ScreenRectangle(half + 10, top + 4, previewWidth, previewWidth * 9 / 16);
         }
-        tabManager.setTabArea(new ScreenRectangle(0, top, width, areaHeight));
+        // Over the list, which takes the left half with the side panel
+        int listWidth = preview != null ? width / 2 : width;
+        int rowWidth = rowWidth(listWidth);
+        int rowLeft = (listWidth - rowWidth) / 2;
+        dimensionButton.setPosition(rowLeft, top + 4);
+        searchBox.setWidth(rowWidth - DIMENSION_BUTTON_WIDTH - WIDGET_GAP);
+        searchBox.setPosition(rowLeft + DIMENSION_BUTTON_WIDTH + WIDGET_GAP, top + 4);
+        tabManager.setTabArea(new ScreenRectangle(0, top + SEARCH_ROW_HEIGHT, width, areaHeight - SEARCH_ROW_HEIGHT));
         presetsButton.setPosition(width / 2 - 155, height - 28);
         doneButton.setPosition(width / 2 - 50, height - 28);
         cancelButton.setPosition(width / 2 + 55, height - 28);
+    }
+
+    // The width of the list rows, and of the search row above them
+    private int rowWidth(int listWidth) {
+        return Math.min(preview != null ? NARROW_ROW_WIDTH : ROW_WIDTH, listWidth - SCROLL_BAR_ROOM);
     }
 
     // Vanilla gives every tab the same width within 400 pixels, which cuts long mod names off early. Instead, each tab
@@ -204,6 +270,20 @@ public final class BiomeToggleScreen extends Screen {
         return Integer.MAX_VALUE;
     }
 
+    private void switchDimension(BiomeDimension value) {
+        dimension = value;
+        selectedTab = 0;
+        lastShownId = null;
+        rebuildWidgets();
+    }
+
+    private void search(String text) {
+        query = text;
+        for (Tab tab : tabs) {
+            if (tab instanceof BiomeTab biomeTab) biomeTab.list.filter(query);
+        }
+    }
+
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         return tabNavigationBar.keyPressed(keyCode) || super.keyPressed(keyCode, scanCode, modifiers);
@@ -219,6 +299,10 @@ public final class BiomeToggleScreen extends Screen {
         if (removeTarget != null) removePreview.setPosition(preview.left(), preview.bottom() + PANEL_TEXT_HEIGHT + 2);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         if (row != null) renderPreview(guiGraphics, row);
+        if (tabManager.getCurrentTab() instanceof BiomeTab tab && tab.list.children().isEmpty()) {
+            guiGraphics.drawCenteredString(font, Component.translatable("biomepicknchoose.configuration.search.none"),
+                    tab.list.getX() + tab.list.getWidth() / 2, tab.list.getY() + 12, HINT_COLOR);
+        }
         int y = height - FOOTER_HEIGHT + 6;
         guiGraphics.drawCenteredString(font, Component.translatable(remote ? "biomepicknchoose.configuration.hint.apply.server" : "biomepicknchoose.configuration.hint.apply"), width / 2, y, HINT_COLOR);
         if (!hasKnownBiomes) {
@@ -231,7 +315,7 @@ public final class BiomeToggleScreen extends Screen {
         int y = preview.top();
         int w = preview.width();
         int h = preview.height();
-        guiGraphics.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF000000 | HINT_COLOR);
+        guiGraphics.fill(x - 1, y - 1, x + w + 1, y + h + 1, HINT_COLOR);
         ResourceLocation texture = BiomePreviews.textureFor(row.id);
         if (texture != null) {
             guiGraphics.blit(texture, x, y, 0, 0, w, h, w, h);
@@ -244,7 +328,7 @@ public final class BiomeToggleScreen extends Screen {
                 lineY += font.lineHeight;
             }
         }
-        guiGraphics.drawString(font, Language.getInstance().getVisualOrder(font.substrByWidth(row.name, w)), x, y + h + 5, 0xFFFFFF);
+        guiGraphics.drawString(font, Language.getInstance().getVisualOrder(font.substrByWidth(row.displayName(), w)), x, y + h + 5, row.textColor());
         guiGraphics.drawString(font, row.id.toString(), x, y + h + 16, HINT_COLOR);
     }
 
@@ -268,7 +352,7 @@ public final class BiomeToggleScreen extends Screen {
     }
 
     private void openPresets() {
-        minecraft.setScreen(new BiomePresetScreen(this, known, disabled, this::reloadRows));
+        minecraft.setScreen(new BiomePresetScreen(this, catalog.allKnown(), disabled, this::reloadRows));
     }
 
     // The rows read their toggle state from disabled when created, so rebuild them after a preset changed it
@@ -315,8 +399,11 @@ public final class BiomeToggleScreen extends Screen {
         BiomeTab(Component title, List<ResourceLocation> biomes) {
             this.title = title;
             this.list = new BiomeList(minecraft, biomes);
-            this.enableAll = Button.builder(Component.translatable("biomepicknchoose.configuration.enable_all"), button -> list.setAll(true)).width(150).build();
-            this.disableAll = Button.builder(Component.translatable("biomepicknchoose.configuration.disable_all"), button -> list.setAll(false)).width(150).build();
+            Tooltip shownOnly = Tooltip.create(Component.translatable("biomepicknchoose.configuration.all.shown"));
+            this.enableAll = Button.builder(Component.translatable("biomepicknchoose.configuration.enable_all"), button -> list.setAll(true))
+                    .width(150).tooltip(shownOnly).build();
+            this.disableAll = Button.builder(Component.translatable("biomepicknchoose.configuration.disable_all"), button -> list.setAll(false))
+                    .width(150).tooltip(shownOnly).build();
             this.sortButton = CycleButton.<SortMode>builder(mode -> Component.translatable(mode.key))
                     .withValues(SortMode.values())
                     .withInitialValue(sortMode)
@@ -341,15 +428,14 @@ public final class BiomeToggleScreen extends Screen {
             // With the side panel, the list and its buttons take the left half
             int listWidth = preview != null ? area.width() / 2 : area.width();
             int buttonWidth = Math.min(100, (listWidth - 40) / 3);
-            int left = area.left() + (listWidth - 3 * buttonWidth - 10) / 2;
+            int left = area.left() + (listWidth - 3 * buttonWidth - 2 * WIDGET_GAP) / 2;
             enableAll.setWidth(buttonWidth);
             disableAll.setWidth(buttonWidth);
             sortButton.setWidth(buttonWidth);
             enableAll.setPosition(left, area.top() + 4);
-            disableAll.setPosition(left + buttonWidth + 5, area.top() + 4);
-            sortButton.setPosition(left + 2 * (buttonWidth + 5), area.top() + 4);
-            // Leaves room for the scroll bar
-            list.rowWidth = Math.min(preview != null ? NARROW_ROW_WIDTH : ROW_WIDTH, listWidth - 24);
+            disableAll.setPosition(left + buttonWidth + WIDGET_GAP, area.top() + 4);
+            sortButton.setPosition(left + 2 * (buttonWidth + WIDGET_GAP), area.top() + 4);
+            list.rowWidth = rowWidth(listWidth);
             list.updateSizeAndPosition(listWidth, area.height() - TAB_HEADER_HEIGHT, area.top() + TAB_HEADER_HEIGHT);
             list.setX(area.left());
         }
@@ -359,11 +445,25 @@ public final class BiomeToggleScreen extends Screen {
     // moving the mouse to the panel doesn't change it
     private final class BiomeList extends ContainerObjectSelectionList<BiomeRow> {
         private int rowWidth = ROW_WIDTH;
+        // Every row of the tab, also the ones the search hides
+        private final List<BiomeRow> allRows;
 
         BiomeList(Minecraft minecraft, List<ResourceLocation> biomes) {
             super(minecraft, 0, 0, 0, ROW_HEIGHT);
-            biomes.stream().map(BiomeRow::new).forEach(this::addEntry);
-            sort(sortMode);
+            allRows = biomes.stream().map(BiomeRow::new).toList();
+            filter(query);
+        }
+
+        // Shows the rows whose name or id contains the text, in the current sort order
+        void filter(String text) {
+            String needle = text.trim().toLowerCase(Locale.ROOT);
+            BiomeRow selected = getSelected();
+            List<BiomeRow> rows = new ArrayList<>(allRows.stream().filter(row -> row.matches(needle)).toList());
+            rows.sort(sortMode.comparator);
+            replaceEntries(rows);
+            setSelected(rows.contains(selected) ? selected : null);
+            // The list keeps its scroll position, which may be past the end of a shorter list
+            setScrollAmount(getScrollAmount());
         }
 
         // Only on picking a mode, so a row doesn't move away right after toggling it
@@ -387,7 +487,7 @@ public final class BiomeToggleScreen extends Screen {
         BiomeRow previewBiome() {
             BiomeRow selected = getSelected();
             if (selected != null) return selected;
-            return children().isEmpty() ? null : getFirstElement();
+            return children().isEmpty() ? null : children().getFirst();
         }
 
         // Focusing a row selects it. Keep the selection when the focus moves elsewhere, like to Enable all
@@ -421,8 +521,42 @@ public final class BiomeToggleScreen extends Screen {
             this.toggle = CycleButton.booleanBuilder(ON, OFF)
                     .withInitialValue(!disabled.contains(id.toString()))
                     .displayOnlyValue()
-                    .withTooltip(enabled -> Tooltip.create(Component.literal(id.toString())))
+                    .withTooltip(enabled -> Tooltip.create(tooltip()))
                     .create(0, 0, 60, 20, name, (button, enabled) -> updateDisabled(enabled));
+        }
+
+        private Component tooltip() {
+            MutableComponent text = Component.literal(id.toString());
+            if (isCave()) text.append("\n").append(Component.translatable("biomepicknchoose.configuration.cave").withStyle(ChatFormatting.GRAY));
+            if (isWater()) text.append("\n").append(Component.translatable("biomepicknchoose.configuration.water").withStyle(ChatFormatting.BLUE));
+            if (isUnused()) text.append("\n").append(Component.translatable("biomepicknchoose.configuration.unused").withStyle(ChatFormatting.YELLOW));
+            return text;
+        }
+
+        boolean matches(String needle) {
+            return needle.isEmpty() || id.toString().contains(needle) || name.getString().toLowerCase(Locale.ROOT).contains(needle);
+        }
+
+        private boolean isCave() {
+            return catalog.caves().contains(id);
+        }
+
+        private boolean isWater() {
+            return catalog.water().contains(id);
+        }
+
+        private boolean isUnused() {
+            return catalog.isUnused(dimension, id);
+        }
+
+        Component displayName() {
+            return isUnused() ? name.copy().withStyle(ChatFormatting.ITALIC) : name;
+        }
+
+        int textColor() {
+            if (isUnused()) return UNUSED_TEXT_COLOR;
+            if (isCave()) return CAVE_TEXT_COLOR;
+            return isWater() ? WATER_TEXT_COLOR : TEXT_COLOR;
         }
 
         void setEnabled(boolean enabled) {
@@ -459,8 +593,8 @@ public final class BiomeToggleScreen extends Screen {
             }
             int nameLeft = left + thumbnailWidth + 6;
             int maxNameWidth = width - ROW_RIGHT_INSET - thumbnailWidth - 6 - toggle.getWidth() - 6;
-            guiGraphics.drawString(font, Language.getInstance().getVisualOrder(font.substrByWidth(name, maxNameWidth)),
-                    nameLeft, top + (height - font.lineHeight) / 2, 0xFFFFFF);
+            guiGraphics.drawString(font, Language.getInstance().getVisualOrder(font.substrByWidth(displayName(), maxNameWidth)),
+                    nameLeft, top + (height - font.lineHeight) / 2, textColor());
             toggle.setPosition(left + width - ROW_RIGHT_INSET - toggle.getWidth(), top + (height - toggle.getHeight()) / 2);
             toggle.render(guiGraphics, mouseX, mouseY, partialTick);
         }

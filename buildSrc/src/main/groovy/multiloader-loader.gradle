@@ -64,6 +64,25 @@ tasks.register('prepareSmokeTest') {
                 'view-distance=2',
                 'simulation-distance=2',
         ].join('\n') + '\n'
+        // A datapack dimension, to check that biomes are also replaced in dimensions other than the vanilla ones
+        def pack = file("$smokeTestDir/world/datapacks/bpnc_test")
+        file("$pack/data/bpnc_test/dimension").mkdirs()
+        file("$pack/pack.mcmeta").text = '{ "pack": { "description": "Biome Pick\'n\'Choose smoke test", "pack_format": 48 } }\n'
+        file("$pack/data/bpnc_test/dimension/plains_world.json").text = '''{
+  "type": "minecraft:overworld",
+  "generator": {
+    "type": "minecraft:noise",
+    "settings": "minecraft:overworld",
+    "biome_source": {
+      "type": "minecraft:multi_noise",
+      "biomes": [
+        { "biome": "minecraft:plains", "parameters": { "temperature": -0.2, "humidity": 0, "continentalness": 0.3, "erosion": 0, "weirdness": 0, "depth": 0, "offset": 0 } },
+        { "biome": "minecraft:cherry_grove", "parameters": { "temperature": 0.2, "humidity": 0, "continentalness": 0.3, "erosion": 0, "weirdness": 0, "depth": 0, "offset": 0 } }
+      ]
+    }
+  }
+}
+'''
     }
 }
 

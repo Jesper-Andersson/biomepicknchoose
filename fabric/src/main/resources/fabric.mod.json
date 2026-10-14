@@ -35,7 +35,11 @@
         "minecraft": "${minecraft_version}",
         "java": ">=${java_version}"
     },
-    "breaks": {
-        "lithostitched": "<1.8.0"
+    "custom": {
+        "mc-publish": {
+            "dependencies": [
+                "lithostitched(optional)"
+            ]
+        }
     }
 }

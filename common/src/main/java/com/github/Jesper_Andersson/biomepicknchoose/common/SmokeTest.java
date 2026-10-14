@@ -12,7 +12,10 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
 import net.minecraft.world.level.biome.MultiNoiseBiomeSourceParameterLists;
+import net.minecraft.world.level.biome.TheEndBiomeSource;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import org.apache.logging.log4j.LogManager;
@@ -31,7 +34,9 @@ import java.util.function.BooleanSupplier;
  * when the {@value #PROPERTY} system property names the biome that the run's config disables. Once the server has
  * started, compares the biomes of the new world with what vanilla would place there. Then it turns that biome back
  * on and disables {@link #RELOAD_BIOME} in the config, runs {@code /reload}, and checks the same for that biome in
- * chunks generated after the reload. Finally, it stops the server and exits with 0 if both passed and 1 otherwise.
+ * chunks generated after the reload. Then it does the same for {@link #NETHER_BIOME}, {@link #END_BIOME} and
+ * {@link #CUSTOM_BIOME}, sampling the biome sources of the Nether, the End and {@link #CUSTOM_DIMENSION} only. That
+ * dimension comes from a datapack that the Gradle task puts in the world folder. Finally, it stops the server and exits with 0 if all passed and 1 otherwise.
  */
 public final class SmokeTest {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -39,6 +44,11 @@ public final class SmokeTest {
     // In the game folder
     private static final String RESULT_FILE = "smoketest-result.txt";
     private static final ResourceLocation RELOAD_BIOME = ResourceLocation.withDefaultNamespace("forest");
+    private static final ResourceLocation NETHER_BIOME = ResourceLocation.withDefaultNamespace("soul_sand_valley");
+    private static final ResourceLocation END_BIOME = ResourceLocation.withDefaultNamespace("end_highlands");
+    private static final ResourceKey<Level> CUSTOM_DIMENSION = ResourceKey.create(Registries.DIMENSION,
+            ResourceLocation.fromNamespaceAndPath("bpnc_test", "plains_world"));
+    private static final ResourceLocation CUSTOM_BIOME = ResourceLocation.withDefaultNamespace("cherry_grove");
     // The biome source is sampled every 64 blocks out to this distance from spawn, without generating chunks
     // Then chunks are generated up to their biomes around the spot nearest to spawn where vanilla would place the biome,
     // and read back from the world
@@ -53,7 +63,10 @@ public final class SmokeTest {
     // Center of the chunks generated before the reload, which keep their biomes, so the second check avoids them
     @Nullable
     private static BlockPos firstCenter;
-    private static boolean reloading;
+    /** Which /reload the test is waiting for. */
+    private enum PendingReload { NONE, OVERWORLD, OTHER_DIMENSIONS }
+
+    private static PendingReload pendingReload = PendingReload.NONE;
     // The biome disabled at the start, set once the property was parsed
     private static ResourceLocation firstBiome;
 
@@ -89,22 +102,83 @@ public final class SmokeTest {
 
         // Swap which biome is disabled, then apply it with /reload, see onReload
         BiomeConfig.save(Set.of(id), List.of(RELOAD_BIOME.toString()));
-        reloading = true;
+        pendingReload = PendingReload.OVERWORLD;
         LOGGER.info("Smoke test: enabled {} and disabled {} in the config, running /reload", id, RELOAD_BIOME);
         server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "reload");
     }
 
     /** Called from {@link BiomeToggles#onReload}. */
     static void onReload(MinecraftServer server) {
-        if (!enabled() || !reloading) return;
-        reloading = false;
+        if (!enabled() || pendingReload == PendingReload.NONE) return;
+        PendingReload reload = pendingReload;
+        pendingReload = PendingReload.NONE;
+        if (reload == PendingReload.OTHER_DIMENSIONS) {
+            if (run(server, () -> checkSource(server, Level.NETHER, NETHER_BIOME) && checkSource(server, Level.END, END_BIOME)
+                    && checkSource(server, CUSTOM_DIMENSION, CUSTOM_BIOME))) {
+                finish(server, true);
+            }
+            return;
+        }
         ResourceLocation first = firstBiome;
         if (BiomeToggles.isDisabled(ResourceKey.create(Registries.BIOME, first))) {
             LOGGER.error("Smoke test FAILED: {} is still disabled after /reload", first);
             finish(server, false);
             return;
         }
-        if (run(server, () -> check(server, RELOAD_BIOME, firstCenter))) finish(server, true);
+        if (!run(server, () -> check(server, RELOAD_BIOME, firstCenter))) return;
+
+        BiomeConfig.save(Set.of(RELOAD_BIOME), List.of(NETHER_BIOME.toString(), END_BIOME.toString(), CUSTOM_BIOME.toString()));
+        pendingReload = PendingReload.OTHER_DIMENSIONS;
+        LOGGER.info("Smoke test: enabled {} and disabled {}, {} and {} in the config, running /reload", RELOAD_BIOME,
+                NETHER_BIOME, END_BIOME, CUSTOM_BIOME);
+        server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "reload");
+    }
+
+    // Samples the dimension's biome source around the origin, against a vanilla source of the same kind that was never
+    // activated, so it shows where the biome would have generated
+    private static boolean checkSource(MinecraftServer server, ResourceKey<Level> dimension, ResourceLocation id) {
+        ResourceKey<Biome> target = ResourceKey.create(Registries.BIOME, id);
+        if (!BiomeToggles.isDisabled(target)) {
+            LOGGER.error("Smoke test FAILED: {} isn't disabled after /reload", id);
+            return false;
+        }
+        ServerLevel level = server.getLevel(dimension);
+        if (level == null) {
+            LOGGER.error("Smoke test FAILED: the server has no {}", dimension.location());
+            return false;
+        }
+        BiomeSource source = level.getChunkSource().getGenerator().getBiomeSource();
+        Climate.Sampler sampler = level.getChunkSource().randomState().sampler();
+        BiomeSource vanilla;
+        if (dimension == Level.END) {
+            vanilla = TheEndBiomeSource.create(server.registryAccess().lookupOrThrow(Registries.BIOME));
+        } else if (BiomeSources.root(source) instanceof BiomeToggleSource root && root.bpnc$parameters() != null) {
+            // The same parameters, with the disabled biomes, in a source that was never activated
+            vanilla = MultiNoiseBiomeSource.createFromList(root.bpnc$parameters());
+        } else {
+            LOGGER.error("Smoke test FAILED: the {} biome source {} isn't supported", dimension.location(), source.getClass().getName());
+            return false;
+        }
+        int quartY = QuartPos.fromBlock(SAMPLE_Y);
+        int expected = 0, found = 0;
+        for (int x = -SAMPLE_RADIUS; x <= SAMPLE_RADIUS; x += SAMPLE_STEP) {
+            for (int z = -SAMPLE_RADIUS; z <= SAMPLE_RADIUS; z += SAMPLE_STEP) {
+                int qx = QuartPos.fromBlock(x), qz = QuartPos.fromBlock(z);
+                if (vanilla.getNoiseBiome(qx, quartY, qz, sampler).is(target)) expected++;
+                if (source.getNoiseBiome(qx, quartY, qz, sampler).is(target)) found++;
+            }
+        }
+        LOGGER.info("Smoke test: {} in sampled {} biome source: {} (vanilla would have {})", id, dimension.location(), found, expected);
+        if (expected == 0) {
+            LOGGER.error("Smoke test FAILED: vanilla wouldn't place {} near the origin either", id);
+            return false;
+        }
+        if (found > 0) {
+            LOGGER.error("Smoke test FAILED: {} still generates", id);
+            return false;
+        }
+        LOGGER.info("Smoke test: {} doesn't generate", id);
+        return true;
     }
 
     /** Called by each loader once a server has stopped. Exits, as the smoke test is all this server was started for. */
