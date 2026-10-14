@@ -1,7 +1,7 @@
 # Biome Pick'n'Choose
 
 [![Modrinth](https://img.shields.io/modrinth/dt/biome-picknchoose?logo=modrinth&label=Modrinth)](https://modrinth.com/mod/biome-picknchoose)
-[![CurseForge](https://img.shields.io/curseforge/dt/biome-picknchoose?logo=curseforge&label=CurseForge)](https://www.curseforge.com/minecraft/mc-mods/biome-picknchoose)
+[![CurseForge](https://img.shields.io/curseforge/dt/1724905?logo=curseforge&label=CurseForge)](https://www.curseforge.com/minecraft/mc-mods/biome-picknchoose)
 
 Turn any biome on or off, vanilla or modded, in any dimension. Disabled biomes are replaced by the closest match, so terrain still blends naturally.
 
