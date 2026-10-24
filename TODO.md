@@ -8,10 +8,10 @@ Biome mods for preview pictures.
 - ~~Terralith~~
 - ~~Incendium~~
 - ~~Stellarity~~
-- Regions Unexplored (in the biomeMods run)
-- Nature's Spirit (in the biomeMods run)
-- Promenade (in the biomeMods run)
-- Autumnity (in the biomeMods run)
+- ~~Regions Unexplored~~
+- ~~Nature's Spirit~~
+- ~~Autumnity~~
+- Promenade (recapture the 4 overworld biomes, they were taken in caves)
 - Nullscape (replaces the End, only one End mod per run)
 - WWOO (replaces the Overworld)
 - Atmospheric (needs Blueprint)
