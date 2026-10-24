@@ -12,6 +12,8 @@ import com.github.Jesper_Andersson.biomepicknchoose.platform.Services;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -101,7 +103,7 @@ public final class BiomePreviews {
                 || Files.isRegularFile(captureFile(biome));
     }
 
-    /** Frees this biome's captured texture and deletes its file. */
+    /** Frees this biome's texture and deletes its captured file. */
     public static void delete(ResourceLocation biome) {
         ResourceLocation location = dynamicLocation(biome);
         if (DYNAMIC.remove(location)) Minecraft.getInstance().getTextureManager().release(location);
@@ -133,7 +135,7 @@ public final class BiomePreviews {
 
     private static ResourceLocation shippedLocation(ResourceLocation biome) {
         return ResourceLocation.fromNamespaceAndPath(Constants.MOD_ID,
-                "textures/gui/biome_preview/" + biome.getNamespace() + "/" + biome.getPath() + ".png");
+                "textures/gui/biome_preview/" + biome.getNamespace() + "/" + biome.getPath() + ".jpg");
     }
 
     private static ResourceLocation dynamicLocation(ResourceLocation biome) {
@@ -146,15 +148,11 @@ public final class BiomePreviews {
                 "dynamic/biome_thumbnail/" + biome.getNamespace() + "/" + biome.getPath());
     }
 
-    // Runs on a background thread. The shipped picture first, like load
+    // Runs on a background thread
     @Nullable
     private static NativeImage readThumbnail(ResourceLocation biome) {
-        Optional<Resource> shipped = Minecraft.getInstance().getResourceManager().getResource(shippedLocation(biome));
-        Path file = captureFile(biome);
-        if (shipped.isEmpty() && !Files.isRegularFile(file)) return null;
-        try (InputStream in = shipped.isPresent() ? shipped.get().open() : Files.newInputStream(file);
-             // RGBA like the thumbnail, since resizeSubRectTo needs both in the same format and pictures can be RGB
-             NativeImage image = NativeImage.read(NativeImage.Format.RGBA, in)) {
+        try (NativeImage image = read(biome)) {
+            if (image == null) return null;
             NativeImage thumbnail = new NativeImage(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, false);
             image.resizeSubRectTo(0, 0, image.getWidth(), image.getHeight(), thumbnail);
             return thumbnail;
@@ -165,21 +163,57 @@ public final class BiomePreviews {
     }
 
     private static Optional<Preview> load(ResourceLocation biome) {
-        Minecraft minecraft = Minecraft.getInstance();
-        ResourceLocation shipped = shippedLocation(biome);
-        if (minecraft.getResourceManager().getResource(shipped).isPresent()) return Optional.of(new Preview(shipped, false));
-
-        Path file = captureFile(biome);
-        if (!Files.isRegularFile(file)) return Optional.empty();
-        try (InputStream in = Files.newInputStream(file)) {
-            NativeImage image = NativeImage.read(in);
+        try {
+            NativeImage image = read(biome);
+            if (image == null) return Optional.empty();
             ResourceLocation location = dynamicLocation(biome);
-            minecraft.getTextureManager().register(location, new DynamicTexture(image));
+            Minecraft.getInstance().getTextureManager().register(location, new DynamicTexture(image));
             DYNAMIC.add(location);
-            return Optional.of(new Preview(location, true));
-        } catch (IOException e) {
-            LOGGER.warn("Couldn't read biome preview {}", file, e);
+            return Optional.of(new Preview(location, !hasShipped(biome)));
+        } catch (IOException | RuntimeException e) {
+            LOGGER.warn("Couldn't read biome preview for {}", biome, e);
             return Optional.empty();
         }
+    }
+
+    private static boolean hasShipped(ResourceLocation biome) {
+        return Minecraft.getInstance().getResourceManager().getResource(shippedLocation(biome)).isPresent();
+    }
+
+    /**
+     * The shipped picture, else the captured one, else null. Always RGBA, which resizeSubRectTo needs for the
+     * thumbnail, since captured pictures can be RGB.
+     */
+    @Nullable
+    private static NativeImage read(ResourceLocation biome) throws IOException {
+        Optional<Resource> shipped = Minecraft.getInstance().getResourceManager().getResource(shippedLocation(biome));
+        if (shipped.isPresent()) {
+            try (InputStream in = shipped.get().open()) {
+                return readJpeg(in);
+            }
+        }
+        Path file = captureFile(biome);
+        if (!Files.isRegularFile(file)) return null;
+        try (InputStream in = Files.newInputStream(file)) {
+            return NativeImage.read(NativeImage.Format.RGBA, in);
+        }
+    }
+
+    // Shipped pictures are JPEG to keep the jar small, which NativeImage can't read
+    private static NativeImage readJpeg(InputStream in) throws IOException {
+        BufferedImage picture = ImageIO.read(in);
+        if (picture == null) throw new IOException("Not a readable JPEG");
+        int width = picture.getWidth();
+        int height = picture.getHeight();
+        int[] argb = picture.getRGB(0, 0, width, height, null, 0, width);
+        NativeImage image = new NativeImage(width, height, false);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int pixel = argb[y * width + x];
+                // setPixelRGBA takes ABGR: swap red and blue, and make it opaque
+                image.setPixelRGBA(x, y, 0xFF000000 | (pixel & 0xFF00) | (pixel >> 16 & 0xFF) | (pixel & 0xFF) << 16);
+            }
+        }
+        return image;
     }
 }
