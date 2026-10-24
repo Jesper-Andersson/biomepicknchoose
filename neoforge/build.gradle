@@ -56,3 +56,8 @@ dependencies {
     // localRuntime "maven.modrinth:lithostitched:${lithostitched_version}-neoforge-${minecraft_version.substring(2)}"
     // localRuntime "maven.modrinth:apollib:${apollib_version}-neoforge-${minecraft_version.substring(2)}"
 }
+
+// The biomeMods run for capturing preview pictures. Local only, see .gitignore
+if (file('biomemods.gradle').exists()) {
+    apply from: 'biomemods.gradle'
+}
