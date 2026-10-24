@@ -38,3 +38,6 @@ hs_err_pid*
 /.idea/inspectionProfiles/profiles_settings.xml
 /.idea/inspectionProfiles/Project_Default.xml
 /.mcp.json
+
+# local biomeMods run
+/neoforge/biomemods.gradle

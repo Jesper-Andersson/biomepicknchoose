@@ -21,8 +21,10 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.TicketType;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
@@ -36,6 +38,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -60,9 +63,13 @@ public final class BiomePreviewCapture {
     private static final int WIDTH = 480;
     private static final int HEIGHT = 270;
     private static final int SETTLE_TICKS = 20;
-    private static final int TIMEOUT_TICKS = 15 * 20;
+    private static final int TIMEOUT_TICKS = 20 * 20;
     private static final long NOON = 6000;
     private static final int CAPTURE_RENDER_DISTANCE = 8;
+    // Keeps the chunks around the next spot generating while the current one is photographed. Expires on its own, so a
+    // cancelled run leaves nothing behind
+    private static final TicketType<ChunkPos> PREFETCH = TicketType.create("biomepicknchoose_preview",
+            Comparator.comparingLong(ChunkPos::toLong), 60 * 20);
     // Around a cave spot, where to look for a cave room: blocks to each side, above and below, and between the blocks tried
     private static final int CAVE_SEARCH_RADIUS = 24;
     private static final int CAVE_SEARCH_HEIGHT = 16;
@@ -301,6 +308,19 @@ public final class BiomePreviewCapture {
         spot = result.spot();
         caveRoom = null;
         moveTo(spot);
+        prefetchNext();
+    }
+
+    // Starts generating the chunks around the next biome's spot, if its search already finished
+    private void prefetchNext() {
+        if (index + 1 >= targets.size()) return;
+        CompletableFuture<BiomeSpotFinder.Result> search = searches.get(index + 1);
+        if (search == null || !search.isDone() || search.isCompletedExceptionally()) return;
+        BiomeSpotFinder.Spot next = search.join().spot();
+        if (next == null) return;
+        ServerLevel level = server.getLevel(targets.get(index + 1).dimension().level());
+        ChunkPos chunk = new ChunkPos(BlockPos.containing(next.x(), next.y(), next.z()));
+        server.execute(() -> level.getChunkSource().addRegionTicket(PREFETCH, chunk, CAPTURE_RENDER_DISTANCE, chunk));
     }
 
     // Waits for the chunks around the camera to load and render, then takes the picture
@@ -320,7 +340,7 @@ public final class BiomePreviewCapture {
         } else if (settled >= SETTLE_TICKS) {
             shoot();
         } else if (waited >= TIMEOUT_TICKS) {
-            LOGGER.warn("Biome preview for {} timed out, capturing anyway", currentId());
+            LOGGER.warn("Biome preview for {} timed out waiting for {}, capturing anyway", currentId(), status.kind());
             timedOut.add(currentId());
             shoot();
         }
