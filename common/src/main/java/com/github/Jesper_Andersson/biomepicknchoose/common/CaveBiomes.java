@@ -24,6 +24,9 @@ public final class CaveBiomes {
     // Common tag for cave biomes, also covers biomes placed by TerraBlender regions, which aren't in the root parameters
     private static final TagKey<Biome> IS_CAVE = TagKey.create(Registries.BIOME, Identifier.fromNamespaceAndPath("c", "is_cave"));
 
+    // Climate noise stays well within -2 to 2, in the quantized units of Climate.Parameter
+    private static final long UNREACHABLE = Climate.quantizeCoord(2);
+
     // Vanilla can't change while the game runs
     private static volatile Set<Identifier> vanilla;
 
@@ -63,11 +66,22 @@ public final class CaveBiomes {
         Set<T> all = new HashSet<>();
         Set<T> surface = new HashSet<>();
         for (Pair<Climate.ParameterPoint, T> entry : values) {
+            if (unreachable(entry.getFirst())) continue;
             all.add(entry.getSecond());
             Climate.Parameter depth = entry.getFirst().depth();
             if (depth.min() <= 0 && depth.max() >= 0) surface.add(entry.getSecond());
         }
         all.removeAll(surface);
         return all;
+    }
+
+    // Biolith lists the biomes it swaps in for part of another biome at a point far outside the climate noise, all
+    // 3.01, so the noise never picks them there. That point says nothing about depth
+    private static boolean unreachable(Climate.ParameterPoint point) {
+        for (Climate.Parameter parameter : List.of(point.temperature(), point.humidity(), point.continentalness(),
+                point.erosion(), point.weirdness())) {
+            if (parameter.min() > UNREACHABLE || parameter.max() < -UNREACHABLE) return true;
+        }
+        return false;
     }
 }
